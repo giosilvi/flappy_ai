@@ -1,0 +1,6 @@
+vibegames.it, www.vibegames.it {
+    encode zstd gzip
+    reverse_proxy app:8765
+}
+
+

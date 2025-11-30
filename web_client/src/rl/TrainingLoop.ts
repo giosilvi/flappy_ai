@@ -1,0 +1,332 @@
+/**
+ * Training Loop - orchestrates RL training with the game engine
+ * Uses WorkerDQNAgent for off-main-thread training
+ */
+
+import { GameEngine, type StepResult } from '@/game'
+import { WorkerDQNAgent, type DQNConfig } from './WorkerDQNAgent'
+
+export interface TrainingMetrics {
+  episode: number
+  episodeReward: number
+  episodeLength: number
+  avgReward: number
+  avgLength: number
+  epsilon: number
+  loss: number
+  bufferSize: number
+  stepsPerSecond: number
+  totalSteps: number
+}
+
+export interface TrainingCallbacks {
+  onStep?: (metrics: TrainingMetrics, qValues: number[]) => void
+  onEpisodeEnd?: (metrics: TrainingMetrics) => void
+  onTrainingStart?: () => void
+  onTrainingStop?: () => void
+}
+
+export class TrainingLoop {
+  private engine: GameEngine
+  private agent: WorkerDQNAgent | null = null
+  private agentConfig: Partial<DQNConfig>
+  private callbacks: TrainingCallbacks
+  private initialized: boolean = false
+
+  // Training state
+  private isRunning: boolean = false
+  private speedFactor: number = 1.0
+
+  // Current episode state
+  private currentState: number[] = []
+  private episodeReward: number = 0
+  private episodeLength: number = 0
+  private episode: number = 0
+
+  // Metrics tracking
+  private recentRewards: number[] = []
+  private recentLengths: number[] = []
+  private readonly metricsWindow = 50
+  private lastStepTime: number = 0
+  private stepsSinceLastMetric: number = 0
+  private stepsPerSecond: number = 0
+
+  constructor(
+    engine: GameEngine,
+    agentConfig: Partial<DQNConfig> = {},
+    callbacks: TrainingCallbacks = {}
+  ) {
+    this.engine = engine
+    this.agentConfig = agentConfig
+    this.callbacks = callbacks
+  }
+
+  /**
+   * Initialize the agent
+   */
+  init(): void {
+    if (this.initialized) return
+
+    console.log('[TrainingLoop] Initializing with Web Worker...')
+
+    // Create the worker-based agent
+    this.agent = new WorkerDQNAgent(this.agentConfig)
+
+    this.initialized = true
+    console.log('[TrainingLoop] Initialized!')
+  }
+
+  /**
+   * Start training
+   */
+  start(): void {
+    if (this.isRunning) return
+
+    // Ensure agent is initialized
+    this.init()
+
+    this.isRunning = true
+    this.currentState = this.engine.reset()
+    this.episodeReward = 0
+    this.episodeLength = 0
+    this.lastStepTime = performance.now()
+
+    this.callbacks.onTrainingStart?.()
+  }
+
+  /**
+   * Stop training
+   */
+  stop(): void {
+    this.isRunning = false
+    this.callbacks.onTrainingStop?.()
+  }
+
+  /**
+   * Execute one training step
+   * Returns true if the episode ended
+   */
+  step(): { result: StepResult; episodeEnded: boolean; finalReward?: number; finalLength?: number } | null {
+    if (!this.isRunning || !this.agent) return null
+
+    // Agent selects action (fast - runs on main thread)
+    const action = this.agent.act(this.currentState, true) as 0 | 1
+
+    // Step the environment
+    const result = this.engine.step(action)
+
+    // Store transition (sent to worker for training - non-blocking)
+    this.agent.remember({
+      state: this.currentState,
+      action,
+      reward: result.reward,
+      nextState: result.observation,
+      done: result.done,
+    })
+
+    // Update episode stats
+    this.episodeReward += result.reward
+    this.episodeLength++
+    this.stepsSinceLastMetric++
+
+    // Train the agent only in fallback mode (worker handles its own training)
+    // This is expensive so only call when necessary
+    if (!this.agent.isUsingWorker() && this.agent.getSteps() % 32 === 0) {
+      this.agent.replay()
+    }
+
+    // Calculate steps per second
+    const now = performance.now()
+    const elapsed = now - this.lastStepTime
+    if (elapsed >= 1000) {
+      this.stepsPerSecond = (this.stepsSinceLastMetric / elapsed) * 1000
+      this.stepsSinceLastMetric = 0
+      this.lastStepTime = now
+    }
+
+    // Get current Q-values for visualization
+    const qValues = this.agent.getLastQValues()
+
+    // Emit step callback
+    this.callbacks.onStep?.(this.getMetrics(), qValues)
+
+    // Handle episode end
+    if (result.done) {
+      this.episode++
+
+      // Capture final episode reward BEFORE resetting
+      const finalEpisodeReward = this.episodeReward
+      const finalEpisodeLength = this.episodeLength
+
+      // Update metrics
+      this.recentRewards.push(finalEpisodeReward)
+      this.recentLengths.push(finalEpisodeLength)
+      if (this.recentRewards.length > this.metricsWindow) {
+        this.recentRewards.shift()
+        this.recentLengths.shift()
+      }
+
+      this.callbacks.onEpisodeEnd?.(this.getMetrics())
+
+      // Reset for next episode
+      this.currentState = this.engine.reset()
+      this.episodeReward = 0
+      this.episodeLength = 0
+
+      // Return with the FINAL episode reward (not the reset value)
+      return { 
+        result, 
+        episodeEnded: true, 
+        finalReward: finalEpisodeReward,
+        finalLength: finalEpisodeLength 
+      }
+    }
+
+    // Continue episode
+    this.currentState = result.observation
+    return { result, episodeEnded: false }
+  }
+
+  /**
+   * Run multiple steps (for faster training)
+   */
+  runSteps(count: number): void {
+    for (let i = 0; i < count && this.isRunning; i++) {
+      this.step()
+    }
+  }
+
+  /**
+   * Get current training metrics
+   */
+  getMetrics(): TrainingMetrics {
+    const avgReward =
+      this.recentRewards.length > 0
+        ? this.recentRewards.reduce((a, b) => a + b, 0) /
+          this.recentRewards.length
+        : 0
+
+    const avgLength =
+      this.recentLengths.length > 0
+        ? this.recentLengths.reduce((a, b) => a + b, 0) /
+          this.recentLengths.length
+        : 0
+
+    return {
+      episode: this.episode,
+      episodeReward: this.episodeReward,
+      episodeLength: this.episodeLength,
+      avgReward,
+      avgLength,
+      epsilon: this.agent?.getEpsilon() ?? 1.0,
+      loss: this.agent?.getLastLoss() ?? 0,
+      bufferSize: this.agent?.getBufferSize() ?? 0,
+      stepsPerSecond: this.stepsPerSecond,
+      totalSteps: this.agent?.getSteps() ?? 0,
+    }
+  }
+
+  /**
+   * Get current game state for rendering
+   */
+  getCurrentState(): number[] {
+    return this.currentState
+  }
+
+  /**
+   * Get network visualization data (simplified - no weights)
+   */
+  getNetworkVisualization(): {
+    activations: number[][]
+    qValues: number[]
+    selectedAction: number
+  } {
+    // Ensure we have a valid state
+    const state = this.currentState.length > 0 
+      ? this.currentState 
+      : [0, 0, 0, 0, 0, 0] // Default 6-dim state
+    
+    if (!this.agent) {
+      return { 
+        activations: [state, [], [], [0, 0]], 
+        qValues: [0, 0], 
+        selectedAction: 0 
+      }
+    }
+    return this.agent.getNetworkVisualization(state)
+  }
+
+  /**
+   * Check if training is running
+   */
+  getIsRunning(): boolean {
+    return this.isRunning
+  }
+
+  // ===== Hyperparameter setters =====
+
+  setSpeedFactor(factor: number): void {
+    this.speedFactor = Math.max(0.25, Math.min(10, factor))
+  }
+
+  getSpeedFactor(): number {
+    return this.speedFactor
+  }
+
+  setEpsilon(value: number): void {
+    this.agent?.setEpsilon(value)
+  }
+
+  setAutoDecay(enabled: boolean): void {
+    this.agent?.setAutoDecay(enabled)
+  }
+
+  getEpsilonDecaySteps(): number {
+    return this.agent?.getEpsilonDecaySteps() ?? 500000
+  }
+
+  setEpsilonDecaySteps(steps: number): void {
+    this.agent?.setEpsilonDecaySteps(steps)
+  }
+
+  setLearningRate(lr: number): void {
+    this.agent?.setLearningRate(lr)
+  }
+
+  setGamma(value: number): void {
+    this.agent?.setGamma(value)
+  }
+
+  /**
+   * Reset training completely
+   */
+  reset(): void {
+    this.stop()
+    this.agent?.reset()
+    this.episode = 0
+    this.episodeReward = 0
+    this.episodeLength = 0
+    this.recentRewards = []
+    this.recentLengths = []
+    this.stepsPerSecond = 0
+    this.currentState = this.engine.reset()
+  }
+
+  /**
+   * Get the agent for saving/loading
+   */
+  getAgent(): WorkerDQNAgent | null {
+    return this.agent
+  }
+
+  /**
+   * Dispose resources
+   */
+  dispose(): void {
+    this.stop()
+    // Terminate the worker
+    this.agent?.terminate()
+    this.agent = null
+    this.initialized = false
+  }
+}
