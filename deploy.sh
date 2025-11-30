@@ -32,14 +32,47 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1) Install Node.js if missing
+# 1) Install Node.js 20.x (with npm)
 # ─────────────────────────────────────────────────────────────────────────────
-if ! command -v node >/dev/null 2>&1; then
+install_node() {
   echo "📦 Installing Node.js 20.x..."
+  
+  # Wait for any apt locks to be released
+  while fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+        fuser /var/lib/dpkg/lock >/dev/null 2>&1 || \
+        fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    echo "   Waiting for apt lock to be released..."
+    sleep 2
+  done
+  
+  # Remove old Node.js if present (Ubuntu's default doesn't include npm)
+  apt-get remove -y nodejs npm 2>/dev/null || true
+  
+  # Install Node.js 20.x from NodeSource
   curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
   apt-get install -y nodejs
+  
+  # Verify npm is available
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "❌ npm not found after Node.js installation. Installing npm separately..."
+    apt-get install -y npm
+  fi
+}
+
+# Check if Node.js 20+ with npm is installed
+if ! command -v node >/dev/null 2>&1; then
+  install_node
+elif ! command -v npm >/dev/null 2>&1; then
+  echo "⚠️  Node.js found but npm missing. Reinstalling..."
+  install_node
 else
-  echo "✓ Node.js $(node --version) already installed"
+  NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+  if [ "$NODE_VERSION" -lt 18 ]; then
+    echo "⚠️  Node.js version too old ($(node --version)). Upgrading..."
+    install_node
+  else
+    echo "✓ Node.js $(node --version) with npm $(npm --version) already installed"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
