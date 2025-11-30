@@ -11,15 +11,15 @@ A browser-first reinforcement learning playground where you can watch, tune, and
 ## ✨ Features
 
 - **Real-time DQN Training** — Watch the agent learn to navigate pipes with a custom neural network implementation (no TensorFlow.js dependency)
-- **Live Hyperparameter Tuning** — Adjust epsilon, learning rate, gamma, and more while training
-- **Neural Network Visualization** — See activations flow through the network in real-time (click to open detailed view)
+- **Live Hyperparameter Tuning** — Adjust epsilon, learning rate, and reward shaping while training
+- **Neural Network Visualization** — See activations flow through the network in real-time (click to open detailed view with ReLU activation display)
 - **Multiple Training Modes:**
   - 🏋️ **Training Mode** — Agent learns with epsilon-greedy exploration
-  - ⚡ **Fast Training** — Skip rendering for 10x+ speedup with DQN workflow visualization
+  - ⚡ **Fast Training** — Skip rendering for maximum CPU utilization
   - 🎯 **Evaluation Mode** — Greedy policy (ε=0) for leaderboard runs
   - 🎮 **Manual Play** — Take control anytime (your plays contribute to the replay buffer!)
-- **Speed Control** — Run training from 0.25x to 10x speed
-- **Metrics Dashboard** — Track rewards, episode lengths, Q-values, and training progress
+- **Metrics Dashboard** — Track rewards, episode lengths, Q-values, loss, and training progress
+- **Checkpoint System** — Save and load training checkpoints
 - **Leaderboard** — Compete for the highest pipe count
 
 ---
@@ -90,51 +90,61 @@ The built files will be in `web_client/dist/`.
 
 The agent uses a Deep Q-Network to learn which action (flap or don't flap) maximizes future rewards:
 
-1. **Observation Space** (6 inputs):
-   - Bird's vertical position and velocity
-   - Distance to next pipe
-   - Pipe gap position
-   - Distance to second pipe
-   - Second pipe gap position
+1. **Observation Space** (6 inputs by default):
+   - `birdY` — Bird's vertical position (normalized)
+   - `birdVel` — Bird's vertical velocity (normalized)
+   - `dx1` — Horizontal distance to next pipe
+   - `dy1` — Vertical distance to next pipe's gap center
+   - `dx2` — Horizontal distance to second pipe
+   - `dy2` — Vertical distance to second pipe's gap center
 
 2. **Neural Network Architecture**:
    - Input layer: 6 neurons
    - Hidden layers: 2 × 64 neurons (ReLU activation)
-   - Output layer: 2 neurons (Q-values for each action)
+   - Output layer: 2 neurons (Q-values for idle/flap)
 
 3. **Training Process**:
    - Agent takes actions using ε-greedy policy
-   - Experiences stored in replay buffer
-   - Network trained on random mini-batches
-   - Target network updated periodically for stability
+   - Experiences stored in replay buffer (50,000 capacity)
+   - Network trained on random mini-batches (32 samples)
+   - Target network updated every 200 steps for stability
 
 ### Reward Structure
 
-| Event | Reward |
-|-------|--------|
+| Event | Default Reward |
+|-------|----------------|
 | Pass a pipe | +1.0 |
-| Each step alive | -0.001 |
+| Each step alive | -0.01 |
 | Death (collision) | -1.0 |
+| Flap cost | -0.003 |
+| Out of bounds (above screen) | -0.005 |
+| Center bonus (moving toward gap) | +0.01 |
+
+All rewards are adjustable via the UI during training.
 
 ---
 
 ## ⚙️ Configuration
 
-### Hyperparameters (adjustable during training)
+### Hyperparameters
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Epsilon (ε) | 1.0 → 0.01 | Exploration rate (decays automatically) |
-| Learning Rate | 0.001 | Neural network learning rate |
-| Gamma (γ) | 0.99 | Discount factor for future rewards |
-| Batch Size | 64 | Samples per training step |
-| Buffer Size | 50,000 | Replay buffer capacity |
+| Parameter | Default | Range | Description |
+|-----------|---------|-------|-------------|
+| Epsilon (ε) | 0.5 → 0.05 | 0 - 1 | Exploration rate (auto-decays over 150K steps) |
+| Learning Rate | 0.001 | 0.0001 - 0.01 | Neural network learning rate |
+| Gamma (γ) | 0.99 | Fixed | Discount factor for future rewards |
+| Batch Size | 32 | Fixed | Samples per training step |
+| Buffer Size | 50,000 | Fixed | Replay buffer capacity |
+| Target Update | Every 200 steps | Fixed | Target network sync frequency |
 
-### Speed Settings
+### Training Modes
 
-- **0.25x - 1x**: Slow motion for observation
-- **2x - 5x**: Accelerated training with rendering
-- **10x**: Fast training (no rendering)
+| Mode | Description |
+|------|-------------|
+| **Normal Training** | Full rendering at 30 FPS with live visualization |
+| **Fast Training** | Rendering disabled, runs as fast as CPU allows |
+| **Evaluation** | Greedy policy (ε=0), no training, 30 FPS |
+| **Manual Play** | Human control, experiences still added to replay buffer |
 
 ---
 
@@ -175,14 +185,13 @@ The deploy script will:
 - **Vue 3** (Option API) — Reactive UI framework
 - **TypeScript** — Type-safe JavaScript
 - **Vite** — Fast build tool and dev server
-- **Canvas API** — Game rendering
+- **Canvas API** — Game rendering at 30 FPS
 - **Web Workers** — Background training (fast mode)
-- **Custom Neural Network** — Pure JS/TS implementation (no external ML libraries)
+- **Custom Neural Network** — Pure JS/TS implementation with ReLU activation
 
 ### Infrastructure
 - **Caddy** — Web server with automatic HTTPS
 - **Docker** — Containerization
-- **Hetzner Cloud** — Hosting
 
 ### Python Reference (`FlapPyBird/`)
 - **PyTorch** — Original DQN training
@@ -192,25 +201,26 @@ The deploy script will:
 
 ## 📊 Training Tips
 
-1. **Start with high epsilon** — Let the agent explore randomly at first
-2. **Watch the Q-values** — They should stabilize as training progresses
-3. **Use fast mode** — Training is ~10x faster without rendering
-4. **Be patient** — Good performance typically emerges after 10,000+ episodes
-5. **Try manual play** — Your gameplay adds to the replay buffer!
+1. **Let auto-decay handle epsilon** — Starts at 0.5 and decays to 0.05 over 150K steps
+2. **Watch the Q-values** — They should stabilize and separate as training progresses
+3. **Use fast mode** — Training is significantly faster without rendering
+4. **Tune rewards carefully** — Higher pass pipe reward encourages aggressive play
+5. **Save checkpoints** — Use the save button to preserve good models
+6. **Try manual play** — Your gameplay adds to the replay buffer and can help bootstrap learning
 
 ---
 
 ## 🎯 Roadmap
 
 - [x] Browser-based DQN training
-- [x] Real-time neural network visualization
+- [x] Real-time neural network visualization with ReLU display
 - [x] Hyperparameter tuning UI
 - [x] Fast training mode with Web Workers
+- [x] Checkpoint save/load
 - [x] Leaderboard system
-- [ ] Model save/load to browser storage
 - [ ] Champion model showcase on landing page
 - [ ] Mobile-optimized controls
-- [ ] Additional RL algorithms (PPO, A2C)
+- [ ] Additional RL algorithms (Double DQN, Dueling DQN)
 
 ---
 
