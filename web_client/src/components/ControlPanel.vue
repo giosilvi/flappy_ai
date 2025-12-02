@@ -93,9 +93,9 @@
           type="range"
           class="form-range"
           :value="learningRate"
-          min="0.0001"
-          max="0.01"
-          step="0.0001"
+          min="0.00001"
+          max="0.002"
+          step="0.00001"
           @input="updateLearningRate"
           :disabled="currentMode !== 'training' || lrScheduler"
         />
@@ -289,7 +289,7 @@ export default defineComponent({
     },
     updateLearningRate(event: Event) {
       const raw = parseFloat((event.target as HTMLInputElement).value)
-      const lr = Math.max(0.0001, Math.min(0.01, raw))
+      const lr = Math.max(0.00001, Math.min(0.002, raw))
       this.$emit('update:learningRate', lr)
     },
     updatePassPipeReward(event: Event) {

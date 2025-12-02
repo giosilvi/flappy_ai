@@ -75,9 +75,9 @@ let lrSchedulerEnabled: boolean = false
 let currentLearningRate: number = 0.0005
 let lrSchedulerBestAvgReward: number = -Infinity
 let lrSchedulerPatienceCounter: number = 0
-const LR_SCHEDULER_PATIENCE = 50  // Episodes without improvement before reducing LR
-const LR_SCHEDULER_FACTOR = 0.5   // Multiply LR by this when reducing
-const LR_SCHEDULER_MIN = 0.00001  // Minimum learning rate
+const LR_SCHEDULER_PATIENCE = 100  // Episodes without improvement before reducing LR
+const LR_SCHEDULER_FACTOR = 0.7    // Multiply LR by this when reducing (less aggressive)
+const LR_SCHEDULER_MIN = 0.00001   // Minimum learning rate
 
 /**
  * Train on a batch from replay buffer
