@@ -39,9 +39,9 @@ export const DefaultDQNConfig: DQNConfig = {
   batchSize: 64,         // Same as Python
   bufferSize: 50000,
 
-  epsilonStart: 0.5,
+  epsilonStart: 0.3,     // Lower start since warmup already collects diverse experiences
   epsilonEnd: 0.05,
-  epsilonDecaySteps: 150000,
+  epsilonDecaySteps: 100000,  // Faster decay to exploitation
 
   targetUpdateFreq: 500, // Same as Python
 }
