@@ -40,7 +40,6 @@ let rewardConfig: RewardConfig = DefaultRewardConfig
 let observationConfig: ObservationConfig = DefaultObservationConfig
 let steps: number = 0
 let lastLoss: number = 0
-let weightUpdateCounter: number = 0
 let experienceCount: number = 0
 
 // Fast-mode environment state
@@ -59,10 +58,10 @@ let fastStepsPerSecond: number = 0
 let fastTotalSteps: number = 0
 
 // Training frequency controls
-const TRAIN_FREQ = 4          // Train every 4 experiences (closer to Python optimize_every=1)
-const WEIGHT_UPDATE_FREQ = 400 // Send weights every N training steps
-const FAST_BATCH_STEPS = 512   // Steps to process per fast-mode chunk
+const TRAIN_FREQ = 16         // Train every 16 experiences (faster throughput)
+const FAST_BATCH_STEPS = 1024  // Steps to process per fast-mode chunk (doubled for speed)
 const METRICS_WINDOW = 50
+const WARMUP_SIZE = 50000     // Minimum buffer size before training starts (100% of buffer)
 
 // Epsilon tracking (for logging - actual epsilon managed on main thread)
 let epsilon: number = 1.0
@@ -99,24 +98,18 @@ function trainOnBatch(): void {
   // Train policy network
   lastLoss = policyNetwork.trainBatch(states, actions, targets)
   steps++
-  weightUpdateCounter++
 
   // Update target network periodically
   if (steps % config.targetUpdateFreq === 0) {
     targetNetwork.copyWeightsFrom(policyNetwork)
   }
 
-  // Send weights to main thread periodically
-  if (weightUpdateCounter >= WEIGHT_UPDATE_FREQ) {
-    weightUpdateCounter = 0
-    const weights = policyNetwork.toJSON()
-    self.postMessage({
-      type: 'weights',
-      data: weights,
-      steps,
-      loss: lastLoss,
-    } as WorkerResponse)
-  }
+  // Note: We no longer send weights periodically during fast training.
+  // Weights are only synced when:
+  // 1. Exiting fast mode (via requestWeights)
+  // 2. Entering eval mode
+  // 3. User saves a checkpoint
+  // This significantly reduces overhead during fast training.
 }
 
 /**
@@ -129,6 +122,10 @@ function updateEpsilon(): void {
   const frac = Math.min(1.0, stepsSinceDecayStart / config.epsilonDecaySteps)
   epsilon =
     decayStartEpsilon + frac * (config.epsilonEnd - decayStartEpsilon)
+}
+
+function isInWarmup(): boolean {
+  return replayBuffer ? replayBuffer.size() < WARMUP_SIZE : true
 }
 
 function emitFastMetrics(): void {
@@ -155,6 +152,7 @@ function emitFastMetrics(): void {
     bufferSize: replayBuffer.size(),
     stepsPerSecond: fastStepsPerSecond,
     totalSteps: fastTotalSteps,
+    isWarmup: isInWarmup(),
   }
 
   self.postMessage({ type: 'fastMetrics', metrics } as WorkerResponse)
@@ -187,7 +185,8 @@ function runFastModeBatch(): void {
     fastTotalSteps++
     fastStepsSinceLastMetric++
 
-    if (experienceCount % TRAIN_FREQ === 0 && replayBuffer.canSample(config.batchSize)) {
+    // Only train after warmup phase (buffer has enough samples)
+    if (!isInWarmup() && experienceCount % TRAIN_FREQ === 0 && replayBuffer.canSample(config.batchSize)) {
       trainOnBatch()
       updateEpsilon()
     }
@@ -213,13 +212,17 @@ function runFastModeBatch(): void {
     }
 
     // Exit early if the batch already consumed a long chunk of time
-    if (performance.now() - startTime > 25) {
+    // Allow up to 50ms per batch for better throughput
+    if (performance.now() - startTime > 50) {
       break
     }
   }
 
   const now = performance.now()
-  if (now - fastLastMetricsTime >= 500) {
+  // Emit metrics more frequently during warmup (every 100ms) so user can see progress
+  // After warmup, emit every 500ms to reduce overhead
+  const metricsInterval = isInWarmup() ? 100 : 500
+  if (now - fastLastMetricsTime >= metricsInterval) {
     fastStepsPerSecond = (fastStepsSinceLastMetric / (now - fastLastMetricsTime)) * 1000
     fastStepsSinceLastMetric = 0
     fastLastMetricsTime = now
@@ -227,6 +230,7 @@ function runFastModeBatch(): void {
   }
 
   if (fastModeRunning) {
+    // Use setImmediate-like pattern for better throughput
     setTimeout(runFastModeBatch, 0)
   }
 }
@@ -257,6 +261,9 @@ function startFastMode(
   fastStepsPerSecond = 0
   fastTotalSteps = startingTotalSteps  // Start from the passed step count
 
+  // Emit metrics immediately so UI shows warmup state right away
+  emitFastMetrics()
+  
   runFastModeBatch()
 }
 
@@ -275,7 +282,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       case 'init': {
         config = message.config
         steps = 0
-        weightUpdateCounter = 0
         epsilon = config.epsilonStart
         decayStartEpsilon = config.epsilonStart
         decayStartStep = 0
@@ -325,8 +331,8 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         replayBuffer.add(message.transition)
         experienceCount++
 
-        // Train every TRAIN_FREQ experiences (not every one - reduces CPU load)
-        if (experienceCount % TRAIN_FREQ === 0 && replayBuffer.canSample(config?.batchSize || 16)) {
+        // Only train after warmup phase (buffer has enough samples)
+        if (!isInWarmup() && experienceCount % TRAIN_FREQ === 0 && replayBuffer.canSample(config?.batchSize || 16)) {
           trainOnBatch()
           updateEpsilon()
         }
@@ -360,7 +366,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         targetNetwork.loadJSON(message.data)
 
         // Reset counters so future training/epsilon decay behaves nicely
-        weightUpdateCounter = 0
         lastLoss = 0
         break
       }
@@ -422,7 +427,6 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
       case 'reset': {
         stopFastMode()
         steps = 0
-        weightUpdateCounter = 0
         experienceCount = 0
         epsilon = config?.epsilonStart || 1.0
         decayStartEpsilon = config?.epsilonStart || 1.0

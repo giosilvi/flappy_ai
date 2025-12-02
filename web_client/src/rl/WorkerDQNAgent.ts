@@ -34,16 +34,16 @@ export const DefaultDQNConfig: DQNConfig = {
   hiddenLayers: [64, 64],
   actionDim: 2,
 
-  learningRate: 0.001,
+  learningRate: 0.0005,  // Slightly lower LR for larger batches
   gamma: 0.99,
-  batchSize: 32,
+  batchSize: 64,         // Larger batches = more efficient training
   bufferSize: 50000,
 
   epsilonStart: 0.5,
   epsilonEnd: 0.05,
   epsilonDecaySteps: 150000,
 
-  targetUpdateFreq: 200,
+  targetUpdateFreq: 500, // Update target less often (more stable)
 }
 
 export class WorkerDQNAgent {

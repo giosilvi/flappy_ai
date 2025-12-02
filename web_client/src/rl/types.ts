@@ -9,4 +9,5 @@ export interface TrainingMetrics {
   bufferSize: number
   stepsPerSecond: number
   totalSteps: number
+  isWarmup: boolean  // True during warmup phase (collecting experience before training)
 }

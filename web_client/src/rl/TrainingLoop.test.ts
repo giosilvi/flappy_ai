@@ -91,6 +91,10 @@ class StubAgent {
     this.weightRequests += 1
   }
 
+  syncEpsilonFromWorker(_epsilon: number): void {
+    // Stub - just accept the value
+  }
+
   onFastMetrics(cb: (metrics: TrainingMetrics) => void): void {
     this.fastMetricsCallback = cb
   }
@@ -135,6 +139,7 @@ describe('TrainingLoop fast-mode control', () => {
       bufferSize: 1000,
       stepsPerSecond: 2500,
       totalSteps: 1234,
+      isWarmup: false,
     }
 
     agent.emitFastMetrics(metrics)
@@ -162,6 +167,7 @@ describe('TrainingLoop fast-mode control', () => {
       bufferSize: 2000,
       stepsPerSecond: 3000,
       totalSteps: 2000,
+      isWarmup: false,
     })
 
     loop.setFastMode(false)

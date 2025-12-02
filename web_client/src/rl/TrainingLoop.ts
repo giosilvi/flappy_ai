@@ -14,6 +14,9 @@ export interface TrainingCallbacks {
   onTrainingStop?: () => void
 }
 
+// Must match WARMUP_SIZE in training.worker.ts
+const WARMUP_SIZE = 50000
+
 export class TrainingLoop {
   private engine: GameEngine
   private agent: WorkerDQNAgent | null = null
@@ -211,6 +214,24 @@ export class TrainingLoop {
       return this.lastWorkerMetrics
     }
 
+    // In fast mode but no worker metrics yet - return placeholder with warmup=true
+    // until we get actual metrics from the worker
+    if (this.fastModeActive) {
+      return {
+        episode: this.episode,
+        episodeReward: 0,
+        episodeLength: 0,
+        avgReward: 0,
+        avgLength: 0,
+        epsilon: this.agent?.getEpsilon() ?? 1.0,
+        loss: 0,
+        bufferSize: 0,
+        stepsPerSecond: 0,
+        totalSteps: this.agent?.getSteps() ?? 0,
+        isWarmup: true, // Assume warmup until worker tells us otherwise
+      }
+    }
+
     const avgReward =
       this.recentRewards.length > 0
         ? this.recentRewards.reduce((a, b) => a + b, 0) /
@@ -223,6 +244,7 @@ export class TrainingLoop {
           this.recentLengths.length
         : 0
 
+    const bufferSize = this.agent?.getBufferSize() ?? 0
     return {
       episode: this.episode,
       episodeReward: this.episodeReward,
@@ -231,9 +253,10 @@ export class TrainingLoop {
       avgLength,
       epsilon: this.agent?.getEpsilon() ?? 1.0,
       loss: this.agent?.getLastLoss() ?? 0,
-      bufferSize: this.agent?.getBufferSize() ?? 0,
+      bufferSize,
       stepsPerSecond: this.stepsPerSecond,
       totalSteps: this.agent?.getSteps() ?? 0,
+      isWarmup: bufferSize < WARMUP_SIZE,
     }
   }
 

@@ -172,6 +172,7 @@
             :totalSteps="totalSteps"
             :avgLength="avgLength"
             :isTraining="mode === 'training' && !isPaused"
+            :isWarmup="isWarmup"
           />
         </div>
       </aside>
@@ -239,6 +240,7 @@ export default defineComponent({
       bufferSize: 0,
       totalSteps: 0,
       avgLength: 0,
+      isWarmup: true,
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
       selectedAction: 0,
@@ -305,6 +307,7 @@ export default defineComponent({
       bufferSize: number
       totalSteps: number
       avgLength: number
+      isWarmup?: boolean
     }) {
       this.episode = metrics.episode
       this.avgReward = metrics.avgReward
@@ -319,6 +322,7 @@ export default defineComponent({
       this.bufferSize = metrics.bufferSize
       this.totalSteps = metrics.totalSteps
       this.avgLength = metrics.avgLength
+      this.isWarmup = metrics.isWarmup ?? false
     },
     handleNetworkUpdate(viz: { activations: number[][]; qValues: number[]; selectedAction: number }) {
       this.networkActivations = viz.activations
@@ -478,13 +482,16 @@ export default defineComponent({
       }
       this.episode = 0
       this.score = 0
+      this.bestScore = 0
       this.avgReward = 0
+      this.episodeReward = 0
       this.loss = 0
       this.bufferSize = 0
       this.totalSteps = 0
       this.avgLength = 0
       this.epsilon = 1.0
       this.autoDecay = true
+      this.isWarmup = true
       this.isPaused = false
       this.showGameOver = false
     },

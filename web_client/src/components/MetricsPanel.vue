@@ -2,10 +2,25 @@
   <div class="metrics-panel panel">
     <div class="panel-header">
       <span>Training Metrics</span>
-      <span class="header-badge" v-if="isTraining">
+      <span class="header-badge header-badge-warmup" v-if="isWarmup && isTraining">
+        <span class="pulse-dot warmup"></span>
+        Warmup
+      </span>
+      <span class="header-badge" v-else-if="isTraining">
         <span class="pulse-dot"></span>
         Live
       </span>
+    </div>
+
+    <!-- Warmup Progress Bar -->
+    <div class="warmup-indicator" v-if="isWarmup && isTraining">
+      <div class="warmup-text">
+        <span>🔥 Collecting experience before training...</span>
+        <span class="warmup-progress-text">{{ formatNumber(bufferSize) }} / 50K</span>
+      </div>
+      <div class="warmup-bar">
+        <div class="warmup-bar-fill" :style="{ width: `${Math.min(100, (bufferSize / 50000) * 100)}%` }"></div>
+      </div>
     </div>
 
     <!-- Primary Metrics Grid -->
@@ -145,6 +160,10 @@ export default defineComponent({
       type: Boolean,
       default: false,
     },
+    isWarmup: {
+      type: Boolean,
+      default: false,
+    },
   },
   data() {
     return {
@@ -203,6 +222,18 @@ export default defineComponent({
   },
   watch: {
     episode(newVal: number, oldVal: number) {
+      // Reset was triggered - clear all histories
+      if (newVal === 0 && oldVal > 0) {
+        this.episodeRewardHistory = []
+        this.avgRewardHistory = []
+        this.fullHistory = []
+        this.fullHistoryEpisodeCount = 0
+        this.pendingRewards = []
+        this.smoothingWindow = 10  // Reset smoothing window
+        this.$nextTick(() => this.drawCharts())
+        return
+      }
+      
       // Only add to history when episode changes
       if (newVal !== oldVal && newVal > 0) {
         // Store episode reward for immediate feedback
@@ -453,6 +484,10 @@ export default defineComponent({
   letter-spacing: 0.05em;
 }
 
+.header-badge-warmup {
+  color: #ffb74d;
+}
+
 .pulse-dot {
   width: 6px;
   height: 6px;
@@ -461,9 +496,50 @@ export default defineComponent({
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.pulse-dot.warmup {
+  background: #ffb74d;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+/* Warmup indicator */
+.warmup-indicator {
+  background: linear-gradient(135deg, rgba(255, 183, 77, 0.15), rgba(255, 183, 77, 0.05));
+  border: 1px solid rgba(255, 183, 77, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.warmup-text {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: #ffb74d;
+  margin-bottom: var(--spacing-xs);
+}
+
+.warmup-progress-text {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+.warmup-bar {
+  height: 6px;
+  background: rgba(255, 183, 77, 0.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.warmup-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff9800, #ffb74d);
+  border-radius: 3px;
+  transition: width 0.3s ease;
 }
 
 .metrics-grid {

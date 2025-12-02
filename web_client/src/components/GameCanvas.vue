@@ -434,8 +434,25 @@ export default defineComponent({
 
     resetTraining() {
       if (this.trainingLoop) {
+        // Stop fast mode if active
+        if (this.fastMode) {
+          this.trainingLoop.setFastMode(false)
+        }
+        // Reset all training state
         this.trainingLoop.reset()
         this.$emit('metrics-update', this.trainingLoop.getMetrics())
+        // Restart training
+        this.trainingLoop.start()
+        // Re-enable fast mode if it was on
+        if (this.fastMode) {
+          this.trainingLoop.setFastMode(true)
+        }
+        // Restart the training loop
+        this.lastFrameTime = performance.now()
+        this.lastMetricsTime = performance.now()
+        if (!this.animationId) {
+          this.runTrainingLoop()
+        }
       }
     },
 

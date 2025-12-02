@@ -31,13 +31,6 @@
       >
         🎯 Eval
       </button>
-      <button 
-        class="mode-btn" 
-        :class="{ active: currentMode === 'manual' }"
-        @click="setMode('manual')"
-      >
-        🎮 Play
-      </button>
     </div>
 
     <div class="controls-body">
