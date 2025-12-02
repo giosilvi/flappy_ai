@@ -384,9 +384,12 @@ export class WorkerDQNAgent {
     }
   }
 
-  startFastTraining(): void {
+  startFastTraining(startingEpisode: number = 0, startingTotalSteps: number = 0): void {
     if (this.worker && this.workerReady) {
-      this.worker.postMessage({ type: 'startFast' })
+      // Sync epsilon to worker before starting fast training
+      this.worker.postMessage({ type: 'setEpsilon', value: this.epsilon })
+      this.worker.postMessage({ type: 'setAutoDecay', enabled: this.autoDecayEnabled })
+      this.worker.postMessage({ type: 'startFast', startingEpisode, startingTotalSteps })
     }
   }
 
@@ -394,6 +397,15 @@ export class WorkerDQNAgent {
     if (this.worker && this.workerReady) {
       this.worker.postMessage({ type: 'stopFast' })
     }
+  }
+
+  /**
+   * Sync epsilon from worker metrics after fast training
+   */
+  syncEpsilonFromWorker(workerEpsilon: number): void {
+    this.epsilon = workerEpsilon
+    this.decayStartEpsilon = workerEpsilon
+    this.decayStartStep = this.steps
   }
 
   getWorkerMetrics(): TrainingMetrics | null {

@@ -450,11 +450,19 @@ export default defineComponent({
           clearTimeout(this.trainingTimeoutId)
           this.trainingTimeoutId = null
         }
+        // Stop fast training in worker when pausing
+        if (this.fastMode && this.trainingLoop) {
+          this.trainingLoop.setFastMode(false)
+        }
       } else {
         this.internalPaused = false
         if (this.isRunning) {
           this.lastFrameTime = performance.now()
           this.lastMetricsTime = performance.now()
+          // Resume fast training if it was active
+          if (this.fastMode && this.trainingLoop) {
+            this.trainingLoop.setFastMode(true)
+          }
           if (this.trainingLoop) {
             this.runTrainingLoop()
           } else {

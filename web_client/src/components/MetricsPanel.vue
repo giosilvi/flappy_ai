@@ -10,16 +10,6 @@
 
     <!-- Primary Metrics Grid -->
     <div class="metrics-grid">
-      <div class="metric metric-primary">
-        <span class="metric-label">Episode</span>
-        <span class="metric-value text-primary">{{ episode.toLocaleString() }}</span>
-      </div>
-
-      <div class="metric metric-primary">
-        <span class="metric-label">Best Score</span>
-        <span class="metric-value text-accent">{{ bestScore }}</span>
-      </div>
-
       <div class="metric">
         <span class="metric-label">Epsilon (ε)</span>
         <span class="metric-value">{{ epsilon.toFixed(3) }}</span>

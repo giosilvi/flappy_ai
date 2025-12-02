@@ -207,6 +207,7 @@ export class TrainingLoop {
    */
   getMetrics(): TrainingMetrics {
     if (this.fastModeActive && this.lastWorkerMetrics) {
+      // Worker already has the correct episode count (started with main thread's count)
       return this.lastWorkerMetrics
     }
 
@@ -246,7 +247,8 @@ export class TrainingLoop {
       }
       this.agent.syncWeightsToWorker()
       this.fastModeActive = true
-      this.agent.startFastTraining()
+      // Pass current episode count and total steps to worker so it continues from where we left off
+      this.agent.startFastTraining(this.episode, this.agent.getSteps())
     } else if (!enabled && this.fastModeActive) {
       this.fastModeActive = false
       this.agent.stopFastTraining()
@@ -256,19 +258,22 @@ export class TrainingLoop {
       if (this.agent.isUsingWorker()) {
         this.agent.requestWeights()
       }
-      // Reset metrics so main thread loop resumes fresh values
+      
+      // Preserve metrics from fast mode before clearing
+      if (this.lastWorkerMetrics) {
+        // Worker already started with our episode count, so just use its final count
+        this.episode = this.lastWorkerMetrics.episode
+        // Sync epsilon from worker so it continues from where fast mode left off
+        this.agent.syncEpsilonFromWorker(this.lastWorkerMetrics.epsilon)
+      }
+      
+      // Only reset current episode stats, not historical data
       this.lastWorkerMetrics = null
-      this.resetEpisodeStats()
+      this.episodeReward = 0
+      this.episodeLength = 0
+      this.stepsPerSecond = 0
       this.currentState = this.engine.reset()
     }
-  }
-
-  private resetEpisodeStats(): void {
-    this.episodeReward = 0
-    this.episodeLength = 0
-    this.recentRewards = []
-    this.recentLengths = []
-    this.stepsPerSecond = 0
   }
 
   /**

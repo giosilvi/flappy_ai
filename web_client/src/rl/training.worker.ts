@@ -20,7 +20,7 @@ type WorkerMessage =
   | { type: 'setLearningRate'; value: number }
   | { type: 'setGamma'; value: number }
   | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
-  | { type: 'startFast'; rewardConfig?: Partial<RewardConfig>; observationConfig?: Partial<ObservationConfig> }
+  | { type: 'startFast'; rewardConfig?: Partial<RewardConfig>; observationConfig?: Partial<ObservationConfig>; startingEpisode?: number; startingTotalSteps?: number }
   | { type: 'stopFast' }
   | { type: 'reset' }
 
@@ -233,7 +233,9 @@ function runFastModeBatch(): void {
 
 function startFastMode(
   rewardOverrides?: Partial<RewardConfig>,
-  observationOverrides?: Partial<ObservationConfig>
+  observationOverrides?: Partial<ObservationConfig>,
+  startingEpisode: number = 0,
+  startingTotalSteps: number = 0
 ): void {
   if (!config) return
 
@@ -243,7 +245,7 @@ function startFastMode(
   fastEngine.reset()
 
   fastModeRunning = true
-  fastEpisode = 0
+  fastEpisode = startingEpisode  // Start from the passed episode count
   fastEpisodeReward = 0
   fastEpisodeLength = 0
   fastLastCompletedReward = 0
@@ -253,7 +255,7 @@ function startFastMode(
   fastLastMetricsTime = performance.now()
   fastStepsSinceLastMetric = 0
   fastStepsPerSecond = 0
-  fastTotalSteps = 0
+  fastTotalSteps = startingTotalSteps  // Start from the passed step count
 
   runFastModeBatch()
 }
@@ -408,7 +410,7 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
           console.warn('[Worker] Cannot start fast mode without initialization')
           break
         }
-        startFastMode(message.rewardConfig, message.observationConfig)
+        startFastMode(message.rewardConfig, message.observationConfig, message.startingEpisode, message.startingTotalSteps)
         break
       }
 
