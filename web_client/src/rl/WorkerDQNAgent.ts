@@ -70,6 +70,7 @@ export class WorkerDQNAgent {
   private lastQValues: number[] = [0, 0]
   private lastWorkerMetrics: TrainingMetrics | null = null
   private fastMetricsCallback?: (metrics: TrainingMetrics) => void
+  private autoEvalCallback?: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void
 
   // Worker ready state
   private workerReady: boolean = false
@@ -161,6 +162,11 @@ export class WorkerDQNAgent {
             this.bufferSize = message.metrics.bufferSize
             this.lastWorkerMetrics = message.metrics
             this.fastMetricsCallback?.(message.metrics)
+            break
+
+          case 'autoEvalResult':
+            console.log('[WorkerDQNAgent] Auto-eval result:', message.result)
+            this.autoEvalCallback?.(message.result)
             break
 
           case 'error':
@@ -383,6 +389,14 @@ export class WorkerDQNAgent {
 
   onFastMetrics(callback: (metrics: TrainingMetrics) => void): void {
     this.fastMetricsCallback = callback
+  }
+
+  onAutoEvalResult(callback: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void): void {
+    this.autoEvalCallback = callback
+  }
+
+  setAutoEval(enabled: boolean, interval?: number, trials?: number): void {
+    this.worker?.postMessage({ type: 'setAutoEval', enabled, interval, trials })
   }
 
   syncWeightsToWorker(): void {

@@ -34,6 +34,7 @@ class StubAgent {
   weightRequests = 0
   weightSyncs = 0
   fastMetricsCallback: ((metrics: TrainingMetrics) => void) | null = null
+  autoEvalCallback: ((result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void) | null = null
   networkVizCalls = 0
 
   act(): 0 | 1 {
@@ -97,6 +98,10 @@ class StubAgent {
 
   syncEpsilonFromWorker(_epsilon: number): void {
     // Stub - just accept the value
+  }
+
+  onAutoEvalResult(callback: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void): void {
+    this.autoEvalCallback = callback
   }
 
   onFastMetrics(cb: (metrics: TrainingMetrics) => void): void {

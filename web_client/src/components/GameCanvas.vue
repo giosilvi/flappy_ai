@@ -50,7 +50,7 @@ export default defineComponent({
       default: false,
     },
   },
-  emits: ['score-update', 'episode-end', 'state-update', 'metrics-update', 'network-update'],
+  emits: ['score-update', 'episode-end', 'state-update', 'metrics-update', 'network-update', 'auto-eval-result'],
   data() {
     return {
       engine: null as GameEngine | null,
@@ -147,6 +147,9 @@ export default defineComponent({
         }, {
           onStep: (metrics) => {
             this.$emit('metrics-update', metrics)
+          },
+          onAutoEvalResult: (result) => {
+            this.$emit('auto-eval-result', result)
           },
         })
       }

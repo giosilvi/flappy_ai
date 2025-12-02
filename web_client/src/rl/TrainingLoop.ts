@@ -7,11 +7,20 @@ import { GameEngine, type RewardConfig, type StepResult } from '@/game'
 import { WorkerDQNAgent, type DQNConfig } from './WorkerDQNAgent'
 import type { TrainingMetrics } from './types'
 
+export interface AutoEvalResult {
+  avgScore: number
+  maxScore: number
+  minScore: number
+  scores: number[]
+  episode: number
+}
+
 export interface TrainingCallbacks {
   onStep?: (metrics: TrainingMetrics, qValues: number[]) => void
   onEpisodeEnd?: (metrics: TrainingMetrics) => void
   onTrainingStart?: () => void
   onTrainingStop?: () => void
+  onAutoEvalResult?: (result: AutoEvalResult) => void
 }
 
 // Must match WARMUP_SIZE in training.worker.ts
@@ -72,6 +81,11 @@ export class TrainingLoop {
     this.agent.onFastMetrics((metrics) => {
       this.lastWorkerMetrics = metrics
       this.callbacks.onStep?.(metrics, this.agent?.getLastQValues() ?? [0, 0])
+    })
+
+    // Listen for auto-eval results
+    this.agent.onAutoEvalResult((result) => {
+      this.callbacks.onAutoEvalResult?.(result)
     })
 
     this.initialized = true

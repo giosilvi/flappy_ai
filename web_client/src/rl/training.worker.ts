@@ -22,15 +22,26 @@ type WorkerMessage =
   | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
   | { type: 'setLRScheduler'; enabled: boolean }
   | { type: 'setTrainFreq'; value: number }
+  | { type: 'setAutoEval'; enabled: boolean; interval?: number; trials?: number }
   | { type: 'startFast'; rewardConfig?: Partial<RewardConfig>; observationConfig?: Partial<ObservationConfig>; startingEpisode?: number; startingTotalSteps?: number }
   | { type: 'stopFast' }
   | { type: 'reset' }
+
+// Auto-eval result type
+interface AutoEvalResult {
+  avgScore: number
+  maxScore: number
+  minScore: number
+  scores: number[]
+  episode: number
+}
 
 // Message types sent FROM worker
 type WorkerResponse =
   | { type: 'weights'; data: { weights: number[][][]; biases: number[][] }; steps: number; loss: number }
   | { type: 'ready' }
   | { type: 'fastMetrics'; metrics: TrainingMetrics }
+  | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'error'; message: string }
 
 // Worker state
@@ -79,6 +90,16 @@ let lrSchedulerPatienceCounter: number = 0
 const LR_SCHEDULER_PATIENCE = 100  // Episodes without improvement before reducing LR
 const LR_SCHEDULER_FACTOR = 0.7    // Multiply LR by this when reducing (less aggressive)
 const LR_SCHEDULER_MIN = 0.00001   // Minimum learning rate
+
+// Auto-eval state
+let autoEvalEnabled: boolean = true  // Enabled by default
+let autoEvalInterval: number = 500   // Run eval every N episodes
+let autoEvalTrials: number = 10      // Number of greedy trials per eval
+let autoEvalRunning: boolean = false
+let autoEvalCurrentTrial: number = 0
+let autoEvalScores: number[] = []
+let autoEvalEngine: GameEngine | null = null
+let lastAutoEvalEpisode: number = 0
 
 /**
  * Train on a batch from replay buffer
@@ -163,6 +184,118 @@ function updateLRScheduler(avgReward: number): void {
       }
       lrSchedulerPatienceCounter = 0
     }
+  }
+}
+
+/**
+ * Run automatic evaluation (greedy policy, no training)
+ */
+function runAutoEval(): void {
+  if (!policyNetwork || !config || autoEvalRunning) return
+  
+  autoEvalRunning = true
+  autoEvalCurrentTrial = 0
+  autoEvalScores = []
+  autoEvalEngine = new GameEngine(rewardConfig, observationConfig)
+  
+  runAutoEvalTrial()
+}
+
+function runAutoEvalTrial(): void {
+  if (!autoEvalEngine || !policyNetwork || !config) {
+    finishAutoEval()
+    return
+  }
+  
+  autoEvalCurrentTrial++
+  autoEvalEngine.reset()
+  let score = 0
+  let steps = 0
+  const maxSteps = 10000  // Safety limit
+  
+  // Emit metrics showing we're in auto-eval
+  emitAutoEvalProgress()
+  
+  // Run one trial synchronously (greedy, no exploration)
+  while (steps < maxSteps) {
+    const state = autoEvalEngine.getObservation()
+    const qValues = policyNetwork.predict(state)
+    const action = qValues[0] > qValues[1] ? 0 : 1  // Greedy action
+    
+    const result = autoEvalEngine.step(action as 0 | 1)
+    steps++
+    
+    if (result.done) {
+      score = result.info.score
+      break
+    }
+  }
+  
+  autoEvalScores.push(score)
+  
+  if (autoEvalCurrentTrial < autoEvalTrials) {
+    // Schedule next trial (allow UI to update)
+    setTimeout(runAutoEvalTrial, 0)
+  } else {
+    finishAutoEval()
+  }
+}
+
+function emitAutoEvalProgress(): void {
+  if (!config || !replayBuffer) return
+  
+  const avgReward =
+    fastRecentRewards.length > 0
+      ? fastRecentRewards.reduce((a, b) => a + b, 0) / fastRecentRewards.length
+      : 0
+  
+  const avgLength =
+    fastRecentLengths.length > 0
+      ? fastRecentLengths.reduce((a, b) => a + b, 0) / fastRecentLengths.length
+      : 0
+  
+  const metrics: TrainingMetrics = {
+    episode: fastEpisode,
+    episodeReward: fastLastCompletedReward,
+    episodeLength: fastLastCompletedLength,
+    avgReward,
+    avgLength,
+    epsilon,
+    loss: lastLoss,
+    bufferSize: replayBuffer.size(),
+    stepsPerSecond: 0,  // Paused during eval
+    totalSteps: fastTotalSteps,
+    isWarmup: false,
+    learningRate: currentLearningRate,
+    isAutoEval: true,
+    autoEvalTrial: autoEvalCurrentTrial,
+    autoEvalTrials: autoEvalTrials,
+  }
+  
+  self.postMessage({ type: 'fastMetrics', metrics } as WorkerResponse)
+}
+
+function finishAutoEval(): void {
+  autoEvalRunning = false
+  autoEvalEngine = null
+  
+  if (autoEvalScores.length > 0) {
+    const result: AutoEvalResult = {
+      avgScore: autoEvalScores.reduce((a, b) => a + b, 0) / autoEvalScores.length,
+      maxScore: Math.max(...autoEvalScores),
+      minScore: Math.min(...autoEvalScores),
+      scores: [...autoEvalScores],
+      episode: fastEpisode,
+    }
+    
+    self.postMessage({ type: 'autoEvalResult', result } as WorkerResponse)
+    lastAutoEvalEpisode = fastEpisode
+  }
+  
+  // Resume fast training if it was running
+  if (fastModeRunning) {
+    fastLastMetricsTime = performance.now()
+    runFastModeBatch()
   }
 }
 
@@ -251,6 +384,15 @@ function runFastModeBatch(): void {
       fastEngine.reset()
       fastEpisodeReward = 0
       fastEpisodeLength = 0
+      
+      // Check if we should run auto-eval (every autoEvalInterval episodes, after warmup)
+      if (autoEvalEnabled && !isInWarmup() && 
+          fastEpisode > 0 && 
+          fastEpisode - lastAutoEvalEpisode >= autoEvalInterval) {
+        // Pause fast training and run eval
+        runAutoEval()
+        return  // Exit batch loop, eval will resume training when done
+      }
     }
 
     // Exit early if the batch already consumed a long chunk of time
@@ -271,7 +413,8 @@ function runFastModeBatch(): void {
     emitFastMetrics()
   }
 
-  if (fastModeRunning) {
+  // Don't continue if auto-eval is running
+  if (fastModeRunning && !autoEvalRunning) {
     // Use setImmediate-like pattern for better throughput
     setTimeout(runFastModeBatch, 0)
   }
@@ -465,6 +608,18 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         break
       }
 
+      case 'setAutoEval': {
+        autoEvalEnabled = message.enabled
+        if (message.interval !== undefined) {
+          autoEvalInterval = message.interval
+        }
+        if (message.trials !== undefined) {
+          autoEvalTrials = message.trials
+        }
+        console.log(`[Worker] Auto-eval: ${message.enabled ? 'enabled' : 'disabled'} (every ${autoEvalInterval} eps, ${autoEvalTrials} trials)`)
+        break
+      }
+
       case 'startFast': {
         if (!policyNetwork || !replayBuffer) {
           console.warn('[Worker] Cannot start fast mode without initialization')
@@ -493,6 +648,18 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         decayStartEpsilon = config?.epsilonStart || 1.0
         decayStartStep = 0
         lastLoss = 0
+        
+        // Reset auto-eval state
+        autoEvalRunning = false
+        autoEvalCurrentTrial = 0
+        autoEvalScores = []
+        autoEvalEngine = null
+        lastAutoEvalEpisode = 0
+        
+        // Reset LR scheduler state
+        lrSchedulerBestAvgReward = -Infinity
+        lrSchedulerPatienceCounter = 0
+        currentLearningRate = config?.learningRate || 0.0005
 
         if (replayBuffer) {
           replayBuffer.clear()

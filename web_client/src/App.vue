@@ -11,9 +11,9 @@
           <span
             v-else-if="mode === 'training'"
             class="badge badge-training"
-            :class="{ 'animate-pulse': !isPaused }"
+            :class="{ 'animate-pulse': !isPaused && !isAutoEval }"
           >
-            {{ isPaused ? 'Paused' : 'Training' }}
+            {{ isAutoEval ? `Auto-eval ${autoEvalTrial}/${autoEvalTrials}` : (isPaused ? 'Paused' : 'Training') }}
           </span>
           <span v-else-if="mode === 'eval'" class="badge badge-eval">Evaluating</span>
           <span v-else-if="mode === 'manual'" class="badge badge-manual">Manual Control</span>
@@ -120,6 +120,7 @@
           @episode-end="handleEpisodeEnd"
           @metrics-update="handleMetricsUpdate"
           @network-update="handleNetworkUpdate"
+          @auto-eval-result="handleAutoEvalResult"
         />
         <div v-if="mode === 'idle'" class="game-overlay">
           <div class="overlay-content">
@@ -157,9 +158,10 @@
         <StatusBar
           :mode="mode"
           :episode="episode"
-          :score="score"
+          :lastScore="lastGameScore"
           :bestScore="bestScore"
           :stepsPerSecond="stepsPerSecond"
+          :autoEvalHistory="autoEvalHistory"
         />
 
         <div class="sidebar-panels">
@@ -247,6 +249,11 @@ export default defineComponent({
       totalSteps: 0,
       avgLength: 0,
       isWarmup: true,
+      isAutoEval: false,
+      autoEvalTrial: 0,
+      autoEvalTrials: 10,
+      lastAutoEvalResult: null as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number } | null,
+      autoEvalHistory: [] as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }[],
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
       selectedAction: 0,
@@ -315,6 +322,9 @@ export default defineComponent({
       avgLength: number
       isWarmup?: boolean
       learningRate?: number
+      isAutoEval?: boolean
+      autoEvalTrial?: number
+      autoEvalTrials?: number
     }) {
       this.episode = metrics.episode
       this.avgReward = metrics.avgReward
@@ -333,6 +343,23 @@ export default defineComponent({
       // Update learning rate from metrics (may change with scheduler)
       if (metrics.learningRate !== undefined) {
         this.learningRate = metrics.learningRate
+      }
+      // Update auto-eval state
+      this.isAutoEval = metrics.isAutoEval ?? false
+      this.autoEvalTrial = metrics.autoEvalTrial ?? 0
+      this.autoEvalTrials = metrics.autoEvalTrials ?? 10
+    },
+    handleAutoEvalResult(result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) {
+      console.log('[App] Auto-eval result:', result)
+      this.lastAutoEvalResult = result
+      // Add to history (keep last 10)
+      this.autoEvalHistory.push(result)
+      if (this.autoEvalHistory.length > 10) {
+        this.autoEvalHistory.shift()
+      }
+      // Update best score if auto-eval found a better one
+      if (result.maxScore > this.bestScore) {
+        this.bestScore = result.maxScore
       }
     },
     handleNetworkUpdate(viz: { activations: number[][]; qValues: number[]; selectedAction: number }) {
@@ -517,6 +544,10 @@ export default defineComponent({
       this.epsilon = 1.0
       this.autoDecay = true
       this.isWarmup = true
+      this.isAutoEval = false
+      this.autoEvalTrial = 0
+      this.lastAutoEvalResult = null
+      this.autoEvalHistory = []
       this.isPaused = false
       this.showGameOver = false
     },
