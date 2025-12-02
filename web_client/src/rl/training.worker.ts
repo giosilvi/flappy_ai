@@ -49,6 +49,8 @@ let fastModeRunning: boolean = false
 let fastEpisode: number = 0
 let fastEpisodeReward: number = 0
 let fastEpisodeLength: number = 0
+let fastLastCompletedReward: number = 0  // Track last completed episode's reward
+let fastLastCompletedLength: number = 0  // Track last completed episode's length
 let fastRecentRewards: number[] = []
 let fastRecentLengths: number[] = []
 let fastLastMetricsTime: number = 0
@@ -144,8 +146,8 @@ function emitFastMetrics(): void {
 
   const metrics: TrainingMetrics = {
     episode: fastEpisode,
-    episodeReward: fastEpisodeReward,
-    episodeLength: fastEpisodeLength,
+    episodeReward: fastLastCompletedReward,  // Report last completed episode, not in-progress
+    episodeLength: fastLastCompletedLength,
     avgReward,
     avgLength,
     epsilon,
@@ -195,6 +197,9 @@ function runFastModeBatch(): void {
 
     if (result.done) {
       fastEpisode++
+      // Store completed episode stats before resetting
+      fastLastCompletedReward = fastEpisodeReward
+      fastLastCompletedLength = fastEpisodeLength
       fastRecentRewards.push(fastEpisodeReward)
       fastRecentLengths.push(fastEpisodeLength)
       if (fastRecentRewards.length > METRICS_WINDOW) {
@@ -241,6 +246,8 @@ function startFastMode(
   fastEpisode = 0
   fastEpisodeReward = 0
   fastEpisodeLength = 0
+  fastLastCompletedReward = 0
+  fastLastCompletedLength = 0
   fastRecentRewards = []
   fastRecentLengths = []
   fastLastMetricsTime = performance.now()

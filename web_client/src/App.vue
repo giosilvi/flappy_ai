@@ -298,6 +298,7 @@ export default defineComponent({
     handleMetricsUpdate(metrics: {
       episode: number
       avgReward: number
+      episodeReward: number
       epsilon: number
       loss: number
       stepsPerSecond: number
@@ -307,7 +308,11 @@ export default defineComponent({
     }) {
       this.episode = metrics.episode
       this.avgReward = metrics.avgReward
-      // episodeReward is set by handleEpisodeEnd (not from metrics - that's already reset)
+      // In fast mode, episodeReward comes from metrics (worker reports last completed episode)
+      // In normal mode, it's set by handleEpisodeEnd
+      if (this.fastMode) {
+        this.episodeReward = metrics.episodeReward
+      }
       this.epsilon = metrics.epsilon
       this.loss = metrics.loss
       this.stepsPerSecond = metrics.stepsPerSecond

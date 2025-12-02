@@ -79,6 +79,29 @@
       </div>
       <canvas ref="avgChartCanvas" class="chart-canvas"></canvas>
     </div>
+
+    <!-- Full Training History Chart -->
+    <div class="metrics-chart metrics-chart-full" v-if="fullHistory.length > 1">
+      <div class="chart-header">
+        <span class="chart-title">📈 Training Progress</span>
+        <span class="chart-range">Full session</span>
+      </div>
+      <canvas ref="fullHistoryCanvas" class="chart-canvas chart-canvas-large"></canvas>
+      <div class="chart-stats">
+        <span class="chart-stat">
+          <span class="stat-label">Peak</span>
+          <span class="stat-value text-success">{{ peakReward.toFixed(2) }}</span>
+        </span>
+        <span class="chart-stat">
+          <span class="stat-label">Current Avg</span>
+          <span class="stat-value" :class="currentTrendClass">{{ currentSmoothedReward.toFixed(2) }}</span>
+        </span>
+        <span class="chart-stat">
+          <span class="stat-label">Trend</span>
+          <span class="stat-value" :class="trendClass">{{ trendIndicator }}</span>
+        </span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -137,7 +160,12 @@ export default defineComponent({
     return {
       episodeRewardHistory: [] as number[],
       avgRewardHistory: [] as number[],
+      fullHistory: [] as number[],  // Full training history (smoothed averages)
+      fullHistoryEpisodeCount: 0,  // Track actual episodes covered
       maxHistoryLength: 100,
+      maxFullHistoryLength: 10000,  // Keep up to 10k data points
+      smoothingWindow: 10,  // Smooth every N episodes for full history
+      pendingRewards: [] as number[],  // Buffer for smoothing
     }
   },
   computed: {
@@ -149,6 +177,37 @@ export default defineComponent({
     speedClass(): string {
       if (this.stepsPerSecond > 100) return 'text-success'
       if (this.stepsPerSecond > 50) return 'text-primary'
+      return 'text-muted'
+    },
+    peakReward(): number {
+      if (this.fullHistory.length === 0) return 0
+      return Math.max(...this.fullHistory)
+    },
+    currentSmoothedReward(): number {
+      if (this.fullHistory.length === 0) return 0
+      // Average of last 10 points
+      const recent = this.fullHistory.slice(-10)
+      return recent.reduce((a, b) => a + b, 0) / recent.length
+    },
+    trendIndicator(): string {
+      if (this.fullHistory.length < 20) return '—'
+      const recent = this.fullHistory.slice(-10)
+      const older = this.fullHistory.slice(-20, -10)
+      const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length
+      const olderAvg = older.reduce((a, b) => a + b, 0) / older.length
+      const diff = recentAvg - olderAvg
+      if (diff > 0.1) return '↑ Improving'
+      if (diff < -0.1) return '↓ Declining'
+      return '→ Stable'
+    },
+    trendClass(): string {
+      if (this.trendIndicator.startsWith('↑')) return 'text-success'
+      if (this.trendIndicator.startsWith('↓')) return 'text-danger'
+      return 'text-muted'
+    },
+    currentTrendClass(): string {
+      if (this.currentSmoothedReward > 0) return 'text-success'
+      if (this.currentSmoothedReward < -0.3) return 'text-danger'
       return 'text-muted'
     },
   },
@@ -166,6 +225,21 @@ export default defineComponent({
         this.avgRewardHistory.push(this.avgReward)
         if (this.avgRewardHistory.length > this.maxHistoryLength) {
           this.avgRewardHistory.shift()
+        }
+
+        // Add to full history (smoothed)
+        this.pendingRewards.push(this.avgReward)
+        this.fullHistoryEpisodeCount++
+        if (this.pendingRewards.length >= this.smoothingWindow) {
+          // Compute smoothed average and add to full history
+          const smoothed = this.pendingRewards.reduce((a, b) => a + b, 0) / this.pendingRewards.length
+          this.fullHistory.push(smoothed)
+          this.pendingRewards = []
+          
+          // Downsample if history gets too long
+          if (this.fullHistory.length > this.maxFullHistoryLength) {
+            this.downsampleHistory()
+          }
         }
         
         this.$nextTick(() => this.drawCharts())
@@ -204,12 +278,32 @@ export default defineComponent({
         this.avgRewardHistory,
         { r: 0, g: 255, b: 136 } // green
       )
+
+      // Draw full history chart (gold/orange)
+      this.drawChartOnCanvas(
+        this.$refs.fullHistoryCanvas as HTMLCanvasElement,
+        this.fullHistory,
+        { r: 255, g: 183, b: 77 }, // gold
+        true // larger chart
+      )
+    },
+    
+    downsampleHistory() {
+      // Reduce history by half by averaging pairs
+      const newHistory: number[] = []
+      for (let i = 0; i < this.fullHistory.length - 1; i += 2) {
+        newHistory.push((this.fullHistory[i] + this.fullHistory[i + 1]) / 2)
+      }
+      this.fullHistory = newHistory
+      // Double the smoothing window so future points represent same time scale
+      this.smoothingWindow *= 2
     },
     
     drawChartOnCanvas(
       canvas: HTMLCanvasElement | undefined,
       values: number[],
-      color: { r: number; g: number; b: number }
+      color: { r: number; g: number; b: number },
+      isLarge: boolean = false
     ) {
       if (!canvas || values.length < 2) return
 
@@ -219,12 +313,12 @@ export default defineComponent({
       // Set canvas size with device pixel ratio for sharpness
       const dpr = window.devicePixelRatio || 1
       const rect = canvas.getBoundingClientRect()
+      const height = isLarge ? 140 : 100
       canvas.width = rect.width * dpr
-      canvas.height = 100 * dpr
+      canvas.height = height * dpr
       ctx.scale(dpr, dpr)
 
       const totalWidth = rect.width
-      const height = 100
       
       // Reserve space for Y axis labels
       const yAxisWidth = 40
@@ -489,6 +583,44 @@ export default defineComponent({
   width: 100%;
   height: 120px;
   border-radius: var(--radius-sm);
+}
+
+.chart-canvas-large {
+  height: 160px;
+}
+
+.metrics-chart-full {
+  background: linear-gradient(180deg, rgba(255, 183, 77, 0.05) 0%, transparent 100%);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.chart-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--color-border);
+}
+
+.chart-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-value {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
 }
 
 .text-success {
