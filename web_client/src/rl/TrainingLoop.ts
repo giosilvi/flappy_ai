@@ -15,7 +15,7 @@ export interface TrainingCallbacks {
 }
 
 // Must match WARMUP_SIZE in training.worker.ts
-const WARMUP_SIZE = 50000
+const WARMUP_SIZE = 10000
 
 export class TrainingLoop {
   private engine: GameEngine

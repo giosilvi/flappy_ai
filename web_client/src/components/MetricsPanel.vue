@@ -16,10 +16,10 @@
     <div class="warmup-indicator" v-if="isWarmup && isTraining">
       <div class="warmup-text">
         <span>🔥 Collecting experience before training...</span>
-        <span class="warmup-progress-text">{{ formatNumber(bufferSize) }} / 50K</span>
+        <span class="warmup-progress-text">{{ formatNumber(bufferSize) }} / 10K</span>
       </div>
       <div class="warmup-bar">
-        <div class="warmup-bar-fill" :style="{ width: `${Math.min(100, (bufferSize / 50000) * 100)}%` }"></div>
+        <div class="warmup-bar-fill" :style="{ width: `${Math.min(100, (bufferSize / 10000) * 100)}%` }"></div>
       </div>
     </div>
 

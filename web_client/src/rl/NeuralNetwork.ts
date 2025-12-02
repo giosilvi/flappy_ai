@@ -1,6 +1,6 @@
 /**
- * Simple Neural Network implementation in pure TypeScript
- * No external dependencies - just matrix operations
+ * Neural Network implementation with Adam optimizer
+ * Pure TypeScript - no external dependencies
  */
 
 export interface LayerConfig {
@@ -12,6 +12,17 @@ export interface LayerConfig {
 export interface NetworkConfig {
   layers: LayerConfig[]
   learningRate: number
+}
+
+interface AdamState {
+  // First moment (mean of gradients)
+  mWeights: number[][][]
+  mBiases: number[][]
+  // Second moment (variance of gradients)
+  vWeights: number[][][]
+  vBiases: number[][]
+  // Timestep
+  t: number
 }
 
 interface Layer {
@@ -27,21 +38,62 @@ interface Layer {
 export class NeuralNetwork {
   private layers: Layer[] = []
   private learningRate: number
+  private adam: AdamState
+
+  // Adam hyperparameters
+  private static readonly BETA1 = 0.9      // Exponential decay rate for first moment
+  private static readonly BETA2 = 0.999    // Exponential decay rate for second moment
+  private static readonly EPSILON = 1e-8   // Small constant for numerical stability
+  private static readonly GRAD_CLIP = 5.0  // Gradient clipping threshold (same as Python)
+  private static readonly WEIGHT_CLIP = 100.0 // Max weight magnitude
 
   constructor(config: NetworkConfig) {
     this.learningRate = config.learningRate
     
+    // Initialize layers
     for (const layerConfig of config.layers) {
       this.layers.push({
         weights: this.initWeights(layerConfig.inputSize, layerConfig.outputSize),
-        biases: new Array(layerConfig.outputSize).fill(0).map(() => (Math.random() - 0.5) * 0.1),
+        biases: new Array(layerConfig.outputSize).fill(0),
         activation: layerConfig.activation,
       })
     }
+
+    // Initialize Adam state
+    this.adam = this.initAdamState()
   }
 
   /**
-   * Xavier/Glorot initialization
+   * Initialize Adam optimizer state (zeros for all moments)
+   */
+  private initAdamState(): AdamState {
+    const mWeights: number[][][] = []
+    const mBiases: number[][] = []
+    const vWeights: number[][][] = []
+    const vBiases: number[][] = []
+
+    for (const layer of this.layers) {
+      const inputSize = layer.weights.length
+      const outputSize = layer.biases.length
+
+      // Initialize m and v to zeros with same shape as weights/biases
+      const mW: number[][] = []
+      const vW: number[][] = []
+      for (let i = 0; i < inputSize; i++) {
+        mW[i] = new Array(outputSize).fill(0)
+        vW[i] = new Array(outputSize).fill(0)
+      }
+      mWeights.push(mW)
+      vWeights.push(vW)
+      mBiases.push(new Array(outputSize).fill(0))
+      vBiases.push(new Array(outputSize).fill(0))
+    }
+
+    return { mWeights, mBiases, vWeights, vBiases, t: 0 }
+  }
+
+  /**
+   * Xavier/Glorot initialization (same as PyTorch default)
    */
   private initWeights(inputSize: number, outputSize: number): number[][] {
     const scale = Math.sqrt(2.0 / (inputSize + outputSize))
@@ -105,15 +157,17 @@ export class NeuralNetwork {
   }
 
   /**
-   * Reset weights if NaN detected
+   * Reset weights and Adam state if NaN detected
    */
   private resetWeights(): void {
     for (const layer of this.layers) {
       const inputSize = layer.weights.length
       const outputSize = layer.biases.length
       layer.weights = this.initWeights(inputSize, outputSize)
-      layer.biases = new Array(outputSize).fill(0).map(() => (Math.random() - 0.5) * 0.1)
+      layer.biases = new Array(outputSize).fill(0)
     }
+    // Reset Adam state too
+    this.adam = this.initAdamState()
   }
 
   /**
@@ -123,11 +177,8 @@ export class NeuralNetwork {
     return this.forward(state)
   }
 
-  private static readonly GRAD_CLIP = 1.0  // Gradient clipping threshold
-  private static readonly WEIGHT_CLIP = 10.0 // Max weight magnitude
-
   /**
-   * Train on a single sample using gradient descent
+   * Train on a single sample using Adam optimizer
    * Uses Huber loss (smooth L1) with gradient clipping
    */
   trainStep(
@@ -154,12 +205,16 @@ export class NeuralNetwork {
       return 0
     }
     
+    // Huber loss (smooth L1)
     const loss = Math.abs(error) < 1 
       ? 0.5 * error * error 
       : Math.abs(error) - 0.5
 
+    // Increment Adam timestep
+    this.adam.t++
+
     // Backward pass
-    // Gradient of Huber loss (already clipped to [-1, 1] by Huber)
+    // Gradient of Huber loss (clipped to [-1, 1])
     let gradOutput = Math.abs(error) < 1 ? -error : -Math.sign(error)
     
     // Only backprop through the action we took
@@ -182,35 +237,57 @@ export class NeuralNetwork {
         return g // linear
       })
       
-      // Clip gradients
+      // Clip gradients (like PyTorch grad_clip)
       const clippedGradPreAct = gradPreAct.map(g => 
         Math.max(-NeuralNetwork.GRAD_CLIP, Math.min(NeuralNetwork.GRAD_CLIP, g))
       )
       
-      // Gradient for biases
+      // Compute input gradient for next layer BEFORE updating weights
+      const inputGrad = new Array(input.length).fill(0)
+      for (let i = 0; i < input.length; i++) {
+        for (let j = 0; j < layer.biases.length; j++) {
+          inputGrad[i] += layer.weights[i][j] * clippedGradPreAct[j]
+        }
+      }
+
+      // Apply Adam update for biases
       for (let j = 0; j < layer.biases.length; j++) {
-        layer.biases[j] -= this.learningRate * clippedGradPreAct[j]
-        // Clip biases
+        const g = clippedGradPreAct[j]
+        
+        // Update biased first moment estimate
+        this.adam.mBiases[l][j] = NeuralNetwork.BETA1 * this.adam.mBiases[l][j] + (1 - NeuralNetwork.BETA1) * g
+        // Update biased second moment estimate
+        this.adam.vBiases[l][j] = NeuralNetwork.BETA2 * this.adam.vBiases[l][j] + (1 - NeuralNetwork.BETA2) * g * g
+        
+        // Bias correction
+        const mHat = this.adam.mBiases[l][j] / (1 - Math.pow(NeuralNetwork.BETA1, this.adam.t))
+        const vHat = this.adam.vBiases[l][j] / (1 - Math.pow(NeuralNetwork.BETA2, this.adam.t))
+        
+        // Update bias
+        layer.biases[j] -= this.learningRate * mHat / (Math.sqrt(vHat) + NeuralNetwork.EPSILON)
+        
+        // Clip bias
         layer.biases[j] = Math.max(-NeuralNetwork.WEIGHT_CLIP, Math.min(NeuralNetwork.WEIGHT_CLIP, layer.biases[j]))
       }
       
-      // Gradient for weights and compute input gradient
-      const inputGrad = new Array(input.length).fill(0)
-      
+      // Apply Adam update for weights
       for (let i = 0; i < input.length; i++) {
         for (let j = 0; j < layer.biases.length; j++) {
-          // Weight gradient (with input clipping too)
-          const weightGrad = input[i] * clippedGradPreAct[j]
-
-          // Cache current weight for backprop before applying the update
-          const currentWeight = layer.weights[i][j]
-
-          // Input gradient for next layer should use the weight *before* the update
-          inputGrad[i] += currentWeight * clippedGradPreAct[j]
-
-          // Apply weight update
-          layer.weights[i][j] = currentWeight - this.learningRate * weightGrad
-          // Clip weights
+          const g = input[i] * clippedGradPreAct[j]
+          
+          // Update biased first moment estimate
+          this.adam.mWeights[l][i][j] = NeuralNetwork.BETA1 * this.adam.mWeights[l][i][j] + (1 - NeuralNetwork.BETA1) * g
+          // Update biased second moment estimate
+          this.adam.vWeights[l][i][j] = NeuralNetwork.BETA2 * this.adam.vWeights[l][i][j] + (1 - NeuralNetwork.BETA2) * g * g
+          
+          // Bias correction
+          const mHat = this.adam.mWeights[l][i][j] / (1 - Math.pow(NeuralNetwork.BETA1, this.adam.t))
+          const vHat = this.adam.vWeights[l][i][j] / (1 - Math.pow(NeuralNetwork.BETA2, this.adam.t))
+          
+          // Update weight
+          layer.weights[i][j] -= this.learningRate * mHat / (Math.sqrt(vHat) + NeuralNetwork.EPSILON)
+          
+          // Clip weight
           layer.weights[i][j] = Math.max(-NeuralNetwork.WEIGHT_CLIP, Math.min(NeuralNetwork.WEIGHT_CLIP, layer.weights[i][j]))
         }
       }
@@ -292,7 +369,8 @@ export class NeuralNetwork {
   }
 
   /**
-   * Copy weights from another network
+   * Copy weights from another network (for target network updates)
+   * Note: Does NOT copy Adam state - target network doesn't train
    */
   copyWeightsFrom(source: NeuralNetwork): void {
     const sourceWeights = source.getWeights()
@@ -321,7 +399,14 @@ export class NeuralNetwork {
   }
 
   /**
-   * Serialize weights to JSON
+   * Get current learning rate
+   */
+  getLearningRate(): number {
+    return this.learningRate
+  }
+
+  /**
+   * Serialize weights to JSON (for checkpoints)
    */
   toJSON(): { weights: number[][][], biases: number[][] } {
     return {
@@ -333,6 +418,7 @@ export class NeuralNetwork {
 
   /**
    * Load weights from JSON
+   * Note: Resets Adam state since we're loading pretrained weights
    */
   loadJSON(data: { weights: number[][][], biases: number[][] }): void {
     for (let l = 0; l < this.layers.length; l++) {
@@ -340,6 +426,8 @@ export class NeuralNetwork {
       this.layers[l].weights = data.weights[l].map(row => [...row])
       this.layers[l].biases = [...data.biases[l]]
     }
+    // Reset Adam state when loading new weights
+    this.adam = this.initAdamState()
   }
 }
 
@@ -379,4 +467,3 @@ export function createDQNNetwork(
   
   return new NeuralNetwork({ layers, learningRate })
 }
-

@@ -59,10 +59,10 @@ let fastStepsPerSecond: number = 0
 let fastTotalSteps: number = 0
 
 // Training frequency controls
-const TRAIN_FREQ = 16         // Train every 16 experiences (faster throughput)
-const FAST_BATCH_STEPS = 1024  // Steps to process per fast-mode chunk (doubled for speed)
+const TRAIN_FREQ = 4          // Train every 4 experiences (balance speed/quality)
+const FAST_BATCH_STEPS = 512  // Steps to process per fast-mode chunk
 const METRICS_WINDOW = 50
-const WARMUP_SIZE = 50000     // Minimum buffer size before training starts (100% of buffer)
+const WARMUP_SIZE = 10000     // Minimum buffer size before training starts (same as Python)
 
 // Epsilon tracking (for logging - actual epsilon managed on main thread)
 let epsilon: number = 1.0
