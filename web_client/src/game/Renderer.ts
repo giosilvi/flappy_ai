@@ -260,70 +260,70 @@ export class Renderer {
 
   /**
    * Draw reward indicator in bottom right (over ground texture)
-   * Styled to match the retro pixel art aesthetic
+   * Styled to match Flappy Bird's score aesthetic with outline
    */
   private drawReward(reward: number, cumulativeReward?: number): void {
     const ctx = this.ctx
     
     // Position: bottom right, above the floor
-    const x = GameConfig.WIDTH - 10
-    const y = GameConfig.HEIGHT - 20
+    const x = GameConfig.WIDTH - 12
+    const y = GameConfig.HEIGHT - 24
+    
+    // Helper to draw text with dark outline (like Flappy Bird score)
+    const drawOutlinedText = (text: string, tx: number, ty: number, fillColor: string, fontSize: number) => {
+      ctx.font = `bold ${fontSize}px Arial, sans-serif`
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'bottom'
+      
+      // Dark outline (draw text offset in all directions)
+      ctx.fillStyle = '#543847'
+      ctx.fillText(text, tx - 2, ty)
+      ctx.fillText(text, tx + 2, ty)
+      ctx.fillText(text, tx, ty - 2)
+      ctx.fillText(text, tx, ty + 2)
+      ctx.fillText(text, tx - 1, ty - 1)
+      ctx.fillText(text, tx + 1, ty - 1)
+      ctx.fillText(text, tx - 1, ty + 1)
+      ctx.fillText(text, tx + 1, ty + 1)
+      
+      // Main fill
+      ctx.fillStyle = fillColor
+      ctx.fillText(text, tx, ty)
+    }
     
     // Format reward with sign and fixed decimals
     const sign = reward >= 0 ? '+' : ''
     const rewardText = `${sign}${reward.toFixed(3)}`
     
-    // Color based on reward value
+    // Color based on reward value (brighter, more readable)
     let color: string
     if (reward > 0.5) {
-      color = '#00ff00' // Bright green for big positive
+      color = '#7fff00' // Chartreuse for big positive
     } else if (reward > 0) {
-      color = '#88ff88' // Light green for small positive
+      color = '#98fb98' // Pale green for small positive
     } else if (reward > -0.1) {
-      color = '#ffff00' // Yellow for small negative (normal step)
+      color = '#fff8dc' // Cornsilk/cream for small negative
     } else if (reward > -0.5) {
-      color = '#ff8800' // Orange for medium negative
+      color = '#ffa500' // Orange for medium negative
     } else {
-      color = '#ff0000' // Red for big negative (death)
+      color = '#ff6347' // Tomato red for big negative
     }
     
-    // Draw with pixel-art style (bigger font)
     ctx.save()
-    ctx.font = 'bold 16px monospace'
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'bottom'
     
-    // Shadow for readability over ground texture
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
-    ctx.fillText(rewardText, x + 1, y + 1)
+    // Label
+    drawOutlinedText('REWARD', x, y - 20, '#ffffff', 11)
     
-    // Main text
-    ctx.fillStyle = color
-    ctx.fillText(rewardText, x, y)
+    // Instant reward
+    drawOutlinedText(rewardText, x, y, color, 18)
     
-    // Label above - "REWARD"
-    ctx.font = 'bold 10px monospace'
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'
-    ctx.fillText('REWARD', x, y - 18)
-    
-    // Draw cumulative reward below (smaller)
+    // Cumulative reward below (slightly smaller)
     if (cumulativeReward !== undefined) {
       const cumSign = cumulativeReward >= 0 ? '+' : ''
       const cumText = `Σ ${cumSign}${cumulativeReward.toFixed(2)}`
+      const cumColor = cumulativeReward >= 0 ? '#98fb98' : '#ff6347'
       
-      // Color for cumulative
-      let cumColor: string
-      if (cumulativeReward > 0) {
-        cumColor = '#88ff88'
-      } else {
-        cumColor = '#ff8888'
-      }
-      
-      ctx.font = 'bold 11px monospace'
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'
-      ctx.fillText(cumText, x + 1, y + 14)
-      ctx.fillStyle = cumColor
-      ctx.fillText(cumText, x, y + 13)
+      drawOutlinedText(cumText, x, y + 20, cumColor, 15)
     }
     
     ctx.restore()
