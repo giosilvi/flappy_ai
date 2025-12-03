@@ -10,7 +10,7 @@
         <span class="status-value text-primary">{{ episode }}</span>
       </div>
       <div class="status-item">
-        <span class="status-label">Last Score</span>
+        <span class="status-label">Last Eval</span>
         <span class="status-value text-accent">{{ lastScore }}</span>
       </div>
       <div 

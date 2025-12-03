@@ -10,7 +10,7 @@
         <div class="champion-badge">👑</div>
         <div class="champion-details">
           <span class="champion-name">{{ champion.name }}</span>
-          <span class="champion-score">{{ champion.score }} pipes</span>
+          <span class="champion-score">{{ champion.score }} pts ({{ champion.pipes || champion.score }} pipes)</span>
         </div>
       </div>
 
@@ -24,7 +24,10 @@
         >
           <span class="entry-rank" :class="getRankClass(index)">{{ index + 1 }}</span>
           <span class="entry-name">{{ entry.name }}</span>
-          <span class="entry-score">{{ entry.score }}</span>
+          <span class="entry-scores">
+            <span class="entry-points">{{ entry.score }}</span>
+            <span class="entry-pipes">{{ entry.pipes || entry.score }}🪈</span>
+          </span>
         </div>
       </div>
 
@@ -198,10 +201,22 @@ export default defineComponent({
   text-overflow: ellipsis;
 }
 
-.entry-score {
+.entry-scores {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.entry-points {
   font-family: var(--font-display);
   font-size: 0.8rem;
   color: var(--color-primary);
+}
+
+.entry-pipes {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
 }
 
 .empty-state {

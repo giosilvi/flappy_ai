@@ -214,7 +214,6 @@
       :pendingParams="networkParams"
       :pendingArchitecture="networkArchitecture"
       @close="showLeaderboard = false"
-      @challenge="handleChallengeChampion"
       @submit="handleScoreSubmitted"
     />
   </div>
@@ -289,8 +288,8 @@ export default defineComponent({
   },
   computed: {
     canSubmitScore(): boolean {
-      // Can submit if we have a best score and just finished an eval
-      return this.bestScore > 0 && (this.mode === 'eval' || this.showGameOver)
+      // Can submit if we have a qualifying best score
+      return this.canSubmitToLeaderboard
     },
     // Epsilon actually used by the policy: training uses slider epsilon, eval is fully greedy (ε=0)
     effectiveEpsilon(): number {
@@ -409,6 +408,8 @@ export default defineComponent({
     handleAutoEvalResult(result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) {
       console.log('[App] Auto-eval result:', result)
       this.lastAutoEvalResult = result
+      // Show the best score from this auto-eval as "Last Score"
+      this.lastGameScore = result.maxScore
       // Add to history (keep last 10)
       this.autoEvalHistory.push(result)
       if (this.autoEvalHistory.length > 10) {
@@ -646,10 +647,6 @@ export default defineComponent({
       if (gameCanvas) {
         gameCanvas.startTraining()
       }
-    },
-    handleChallengeChampion() {
-      this.showLeaderboard = false
-      this.openTrainingConfig()
     },
     async handleScoreSubmitted(result: { entry: { name: string; score: number }; isNewChampion: boolean }) {
       if (result.isNewChampion) {

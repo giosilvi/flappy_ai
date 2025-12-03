@@ -14,14 +14,8 @@
         <div class="champion-info">
           <span class="champion-label">Current Champion</span>
           <span class="champion-name">{{ champion.name }}</span>
-          <span class="champion-score">{{ champion.score }} pipes</span>
+          <span class="champion-score">{{ champion.score }} points ({{ champion.pipes || champion.score }} pipes)</span>
         </div>
-        <button 
-          class="btn btn-accent btn-small"
-          @click="$emit('challenge')"
-        >
-          Challenge it!
-        </button>
       </div>
 
       <!-- Leaderboard Table -->
@@ -149,7 +143,7 @@ export default defineComponent({
       default: '6→64→64→2',
     },
   },
-  emits: ['close', 'challenge', 'submit'],
+  emits: ['close', 'submit'],
   data() {
     return {
       entries: [] as LeaderboardEntry[],
