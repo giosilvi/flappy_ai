@@ -192,6 +192,11 @@ export default defineComponent({
         if (now - this.lastMetricsTime >= 500) {
           const metrics = this.trainingLoop.getMetrics()
           this.$emit('metrics-update', metrics)
+          
+          // Emit network visualization with REAL activations
+          const viz = this.trainingLoop.getNetworkVisualization()
+          this.$emit('network-update', viz)
+          
           this.lastMetricsTime = now
         }
 
@@ -226,13 +231,9 @@ export default defineComponent({
         const metrics = this.trainingLoop.getMetrics()
         this.$emit('metrics-update', metrics)
 
-        const qValues = this.trainingLoop.getAgent()?.getLastQValues() || [0, 0]
-        const state = this.trainingLoop.getCurrentState()
-        this.$emit('network-update', {
-          activations: [state],
-          qValues,
-          selectedAction: qValues[0] > qValues[1] ? 0 : 1
-        })
+        // Emit network visualization with REAL activations
+        const viz = this.trainingLoop.getNetworkVisualization()
+        this.$emit('network-update', viz)
 
         this.lastMetricsTime = now
       }
@@ -619,11 +620,12 @@ export default defineComponent({
 
       // Update UI at game FPS to match game steps
       if (now - this.lastMetricsTime >= GameConfig.FRAME_TIME) {
-        this.$emit('network-update', {
-          activations: [this.lastEvalObservation],
-          qValues: this.lastEvalQValues,
-          selectedAction: this.lastEvalAction,
-        })
+        // Get REAL activations from the network
+        const agent = this.trainingLoop.getAgent()
+        if (agent && this.lastEvalObservation.length > 0) {
+          const viz = agent.getNetworkVisualization(this.lastEvalObservation)
+          this.$emit('network-update', viz)
+        }
         this.lastMetricsTime = now
       }
 

@@ -322,8 +322,8 @@
         Neural Network Visualization
       </h1>
       <div class="info">
-        <span class="architecture">6 → 64 → 64 → 2</span>
-        <span class="params">4,738 parameters</span>
+        <span class="architecture" id="architecture-display">6 → 64 → 64 → 2</span>
+        <span class="params" id="params-display">8,706 parameters</span>
         <div class="status">
           <div class="status-dot"></div>
           <span>LIVE</span>
@@ -451,10 +451,44 @@
     
     const SVG_WIDTH = 1200;
     const SVG_HEIGHT = 600;
-    const LAYER_POSITIONS = [120, 400, 700, 1080];
     const INPUT_NODE_RADIUS = 20;
     const HIDDEN_NODE_RADIUS = 6;
     const OUTPUT_NODE_RADIUS = 28;
+    
+    // Current network configuration (will be updated from localStorage)
+    let hiddenLayerSizes = [64, 64];
+    
+    // Calculate layer positions dynamically
+    function getLayerPositions() {
+      const numLayers = hiddenLayerSizes.length + 2; // input + hidden layers + output
+      const positions = [];
+      const startX = 120;
+      const endX = 1080;
+      const spacing = (endX - startX) / (numLayers - 1);
+      for (let i = 0; i < numLayers; i++) {
+        positions.push(startX + i * spacing);
+      }
+      return positions;
+    }
+    
+    // Calculate total parameters
+    function calculateParams() {
+      const layers = [6, ...hiddenLayerSizes, 2];
+      let total = 0;
+      for (let i = 0; i < layers.length - 1; i++) {
+        total += layers[i] * layers[i + 1] + layers[i + 1]; // weights + biases
+      }
+      return total;
+    }
+    
+    // Update header display
+    function updateHeader() {
+      const archDisplay = document.getElementById('architecture-display');
+      const paramsDisplay = document.getElementById('params-display');
+      const layers = [6, ...hiddenLayerSizes, 2];
+      archDisplay.textContent = layers.join(' → ');
+      paramsDisplay.textContent = calculateParams().toLocaleString() + ' parameters';
+    }
 
     function getNodeColor(activation) {
       // ReLU outputs are always >= 0
@@ -492,8 +526,16 @@
     }
 
     function renderNetwork(data) {
-      const { activations, qValues, selectedAction } = data;
+      const { activations, qValues, selectedAction, hiddenLayers } = data;
       const inputValues = activations[0] || [0, 0, 0, 0, 0, 0];
+      
+      // Update hidden layer configuration if provided
+      if (hiddenLayers && hiddenLayers.length > 0) {
+        hiddenLayerSizes = hiddenLayers;
+        updateHeader();
+      }
+      
+      const LAYER_POSITIONS = getLayerPositions();
       
       document.getElementById('no-data').style.display = 'none';
       
@@ -506,9 +548,15 @@
       edgesGroup.innerHTML = '';
       nodesGroup.innerHTML = '';
       
-      // Layer labels
-      const layerNames = ['Input', 'Hidden 1', 'Hidden 2', 'Output'];
-      const layerSizes = ['6 nodes', '64 nodes', '64 nodes', '2 nodes'];
+      // Build layer names and sizes dynamically
+      const layerNames = ['Input'];
+      const layerSizes = ['6 nodes'];
+      hiddenLayerSizes.forEach((size, i) => {
+        layerNames.push(`Hidden ${i + 1}`);
+        layerSizes.push(`${size} nodes`);
+      });
+      layerNames.push('Output');
+      layerSizes.push('2 nodes');
       
       LAYER_POSITIONS.forEach((x, i) => {
         const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -540,128 +588,107 @@
         });
       }
       
-      // Hidden layer node positions (4 columns x 16 rows = 64 nodes representation)
-      // Compute pseudo-activations based on weighted sum of inputs (simulating ReLU-like behavior)
-      const hiddenLayers = [[], []];
+      // Hidden layer node positions - show ALL nodes with real activations
+      const hiddenLayerNodes = [];
       
-      // Layer 1: Each hidden node receives weighted combination of all inputs
-      const x1 = LAYER_POSITIONS[1];
-      const rows = 16;
-      const cols = 4;
-      const rowSpacing = (SVG_HEIGHT - 120) / (rows - 1);
-      const colSpacing = 18;
-      const colOffset = -((cols - 1) * colSpacing) / 2;
+      // Real activations array: [input, hidden1, hidden2, ..., output]
+      // activations[0] = input (6 values)
+      // activations[1..n-1] = hidden layers
+      // activations[n] = output (2 values)
+      const hasRealActivations = activations.length > 1;
       
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const idx = row * cols + col;
-          // Weighted sum of inputs with pseudo-random but deterministic weights
-          let preActivation = 0;
-          for (let i = 0; i < 6; i++) {
-            const weight = Math.sin((idx * 7 + i * 13) * 0.1) * 0.5;
-            preActivation += inputValues[i] * weight;
-          }
-          // Apply ReLU activation function: max(0, x)
-          const activation = Math.max(0, preActivation);
+      // Create each hidden layer - ALL nodes
+      hiddenLayerSizes.forEach((layerSize, layerIdx) => {
+        const layer = [];
+        const x = LAYER_POSITIONS[layerIdx + 1];
+        
+        // Get real activations for this hidden layer (index layerIdx + 1 in activations array)
+        const layerActivations = hasRealActivations ? (activations[layerIdx + 1] || []) : [];
+        
+        // Calculate grid layout for ALL nodes
+        // More columns for larger layers to fit in available space
+        let cols;
+        if (layerSize <= 16) cols = 1;
+        else if (layerSize <= 32) cols = 2;
+        else if (layerSize <= 64) cols = 4;
+        else cols = 8; // 128 nodes = 8 cols x 16 rows
+        
+        const rows = Math.ceil(layerSize / cols);
+        
+        // Adjust spacing based on number of rows to fit in available height
+        const availableHeight = SVG_HEIGHT - 140;
+        const rowSpacing = Math.min(20, availableHeight / Math.max(rows - 1, 1));
+        const colSpacing = 14;
+        const colOffset = -((cols - 1) * colSpacing) / 2;
+        const totalHeight = (rows - 1) * rowSpacing;
+        const startY = 70 + (availableHeight - totalHeight) / 2;
+        
+        // Smaller nodes for larger layers
+        const nodeRadius = layerSize > 64 ? 4 : (layerSize > 32 ? 5 : HIDDEN_NODE_RADIUS);
+        
+        for (let i = 0; i < layerSize; i++) {
+          const row = Math.floor(i / cols);
+          const col = i % cols;
           
-          hiddenLayers[0].push({
-            x: x1 + colOffset + col * colSpacing,
-            y: 60 + row * rowSpacing,
-            activation: activation
+          // Use REAL activation value from the network
+          const activation = layerActivations[i] || 0;
+          
+          layer.push({
+            x: x + colOffset + col * colSpacing,
+            y: startY + row * rowSpacing,
+            activation,
+            radius: nodeRadius
           });
         }
-      }
+        hiddenLayerNodes.push(layer);
+      });
       
-      // Layer 2: Each node receives weighted combination from layer 1
-      const x2 = LAYER_POSITIONS[2];
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const idx = row * cols + col;
-          // Weighted sum from layer 1 nodes
-          let preActivation = 0;
-          for (let i = 0; i < 64; i++) {
-            const weight = Math.sin((idx * 11 + i * 5) * 0.05) * 0.3;
-            preActivation += hiddenLayers[0][i].activation * weight;
-          }
-          // Apply ReLU activation function: max(0, x)
-          const activation = Math.max(0, preActivation);
-          
-          hiddenLayers[1].push({
-            x: x2 + colOffset + col * colSpacing,
-            y: 60 + row * rowSpacing,
-            activation: activation
-          });
-        }
-      }
-      
-      // Output node positions
+      // Output node positions (last position in LAYER_POSITIONS)
+      const outputX = LAYER_POSITIONS[LAYER_POSITIONS.length - 1];
       const outputNodes = [
-        { x: LAYER_POSITIONS[3], y: SVG_HEIGHT / 2 - 60, activation: qValues[0], label: OUTPUT_LABELS[0] },
-        { x: LAYER_POSITIONS[3], y: SVG_HEIGHT / 2 + 60, activation: qValues[1], label: OUTPUT_LABELS[1] }
+        { x: outputX, y: SVG_HEIGHT / 2 - 60, activation: qValues[0], label: OUTPUT_LABELS[0] },
+        { x: outputX, y: SVG_HEIGHT / 2 + 60, activation: qValues[1], label: OUTPUT_LABELS[1] }
       ];
       
-      // Draw edges (static color for efficiency - nodes show activation colors)
-      // Helper to get node index from row/col (4 cols per row)
-      const nodeIdx = (row, col) => row * 4 + col;
-      
-      // Static edge style
+      // Draw edges (static color for efficiency)
       const EDGE_COLOR = '#3a4a5a';
       const EDGE_WIDTH = '0.4';
       const EDGE_OPACITY = '0.5';
       
-      // Input to H1: Connect each input to nodes across ALL rows
-      inputNodes.forEach((inp, inputIdx) => {
-        for (let row = 0; row < 16; row++) {
-          const col = (inputIdx + row) % 4;
-          const h1 = hiddenLayers[0][nodeIdx(row, col)];
-          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-          line.setAttribute('x1', inp.x + INPUT_NODE_RADIUS);
-          line.setAttribute('y1', inp.y);
-          line.setAttribute('x2', h1.x);
-          line.setAttribute('y2', h1.y);
-          line.setAttribute('stroke', EDGE_COLOR);
-          line.setAttribute('stroke-width', EDGE_WIDTH);
-          line.setAttribute('opacity', EDGE_OPACITY);
-          edgesGroup.appendChild(line);
-        }
-      });
-      
-      // H1 to H2: Connect ALL rows with distribution across columns
-      for (let srcRow = 0; srcRow < 16; srcRow++) {
-        for (let srcCol = 0; srcCol < 4; srcCol += 2) {
-          const h1 = hiddenLayers[0][nodeIdx(srcRow, srcCol)];
-          const dstRow = (srcRow + 3) % 16;
-          const dstCol = (srcCol + 1) % 4;
-          const h2 = hiddenLayers[1][nodeIdx(dstRow, dstCol)];
-          const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-          line.setAttribute('x1', h1.x + HIDDEN_NODE_RADIUS);
-          line.setAttribute('y1', h1.y);
-          line.setAttribute('x2', h2.x - HIDDEN_NODE_RADIUS);
-          line.setAttribute('y2', h2.y);
-          line.setAttribute('stroke', EDGE_COLOR);
-          line.setAttribute('stroke-width', EDGE_WIDTH);
-          line.setAttribute('opacity', EDGE_OPACITY);
-          edgesGroup.appendChild(line);
-        }
-      }
-      
-      // H2 to Output: Connect ALL rows to both outputs
-      for (let row = 0; row < 16; row++) {
-        for (let col = 0; col < 4; col += 2) {
-          const h2 = hiddenLayers[1][nodeIdx(row, col)];
-          outputNodes.forEach((out, outIdx) => {
+      // Helper to draw edges between layers with sampling
+      function drawEdges(fromNodes, toNodes, fromRadius, toRadius) {
+        // Sample edges for visual clarity
+        const maxEdges = 100;
+        const step = Math.max(1, Math.floor(fromNodes.length * toNodes.length / maxEdges));
+        let count = 0;
+        
+        fromNodes.forEach((from, i) => {
+          toNodes.forEach((to, j) => {
+            if (count++ % step !== 0) return;
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', h2.x + HIDDEN_NODE_RADIUS);
-            line.setAttribute('y1', h2.y);
-            line.setAttribute('x2', out.x - OUTPUT_NODE_RADIUS);
-            line.setAttribute('y2', out.y);
+            line.setAttribute('x1', from.x + fromRadius);
+            line.setAttribute('y1', from.y);
+            line.setAttribute('x2', to.x - toRadius);
+            line.setAttribute('y2', to.y);
             line.setAttribute('stroke', EDGE_COLOR);
             line.setAttribute('stroke-width', EDGE_WIDTH);
             line.setAttribute('opacity', EDGE_OPACITY);
             edgesGroup.appendChild(line);
           });
-        }
+        });
       }
+      
+      // Input to first hidden layer
+      drawEdges(inputNodes, hiddenLayerNodes[0], INPUT_NODE_RADIUS, HIDDEN_NODE_RADIUS);
+      
+      // Between hidden layers
+      for (let i = 0; i < hiddenLayerNodes.length - 1; i++) {
+        drawEdges(hiddenLayerNodes[i], hiddenLayerNodes[i + 1], HIDDEN_NODE_RADIUS, HIDDEN_NODE_RADIUS);
+      }
+      
+      // Last hidden layer to output
+      const lastHidden = hiddenLayerNodes[hiddenLayerNodes.length - 1];
+      drawEdges(lastHidden, outputNodes, HIDDEN_NODE_RADIUS, OUTPUT_NODE_RADIUS);
       
       // Draw input nodes
       inputNodes.forEach((node, i) => {
@@ -696,16 +723,16 @@
         nodesGroup.appendChild(g);
       });
       
-      // Draw hidden layer nodes
-      hiddenLayers.forEach((layer) => {
+      // Draw hidden layer nodes (ALL of them with dynamic radius)
+      hiddenLayerNodes.forEach((layer) => {
         layer.forEach((node) => {
           const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
           circle.setAttribute('cx', node.x);
           circle.setAttribute('cy', node.y);
-          circle.setAttribute('r', HIDDEN_NODE_RADIUS);
+          circle.setAttribute('r', node.radius || HIDDEN_NODE_RADIUS);
           circle.setAttribute('fill', getNodeColor(node.activation));
           circle.setAttribute('stroke', getNodeStroke(node.activation));
-          circle.setAttribute('stroke-width', 1);
+          circle.setAttribute('stroke-width', node.radius < 5 ? 0.5 : 1);
           circle.setAttribute('opacity', 0.85);
           nodesGroup.appendChild(circle);
         });
@@ -795,21 +822,74 @@
     // Draw curve on page load
     drawReluCurve();
 
-    // Poll localStorage for updates
+    // Debug: Check all localStorage keys on load
+    console.log('[NetworkDetail] All localStorage keys:', Object.keys(localStorage));
+    console.log('[NetworkDetail] Current origin:', window.location.origin);
+    
+    // Adaptive refresh rate based on network size (prioritize performance)
+    let refreshInterval = 200; // Default 5fps
+    let lastRenderTime = 0;
+    let lastDataCheck = 0;
+    let foundData = false;
+    
+    // Calculate refresh interval based on total nodes
+    function calculateRefreshInterval(hiddenLayers) {
+      const totalNodes = 6 + hiddenLayers.reduce((a, b) => a + b, 0) + 2;
+      // Small network (<100 nodes): 200ms (5fps)
+      // Medium network (100-300): 500ms (2fps)
+      // Large network (>300): 1000ms (1fps)
+      if (totalNodes < 100) return 200;
+      if (totalNodes < 300) return 500;
+      return 1000;
+    }
+    
     function pollData() {
+      const now = Date.now();
+      
+      // Only render at the adaptive refresh rate
+      if (now - lastRenderTime < refreshInterval) {
+        requestAnimationFrame(pollData);
+        return;
+      }
+      
       try {
         const data = localStorage.getItem('flappy-ai-network-data');
+        
+        // Log every 2 seconds if no data
+        if (!data && now - lastDataCheck > 2000) {
+          console.log('[NetworkDetail] No data found. Keys in localStorage:', Object.keys(localStorage));
+          lastDataCheck = now;
+        }
+        
         if (data) {
+          if (!foundData) {
+            console.log('[NetworkDetail] Found data! Parsing...');
+            foundData = true;
+          }
           const parsed = JSON.parse(data);
-          renderNetwork(parsed);
+          if (parsed && parsed.activations) {
+            // Update refresh interval when network config changes
+            if (parsed.hiddenLayers) {
+              const newInterval = calculateRefreshInterval(parsed.hiddenLayers);
+              if (newInterval !== refreshInterval) {
+                console.log(`[NetworkDetail] Adaptive refresh: ${refreshInterval}ms → ${newInterval}ms`);
+                refreshInterval = newInterval;
+              }
+            }
+            renderNetwork(parsed);
+            lastRenderTime = now;
+          } else {
+            console.warn('[NetworkDetail] Data missing activations:', Object.keys(parsed));
+          }
         }
       } catch (e) {
-        console.error('Error reading network data:', e);
+        console.error('[NetworkDetail] Error:', e);
       }
       requestAnimationFrame(pollData);
     }
 
     // Start polling
+    console.log('[NetworkDetail] Starting data polling...');
     pollData();
   </script>
 </body>

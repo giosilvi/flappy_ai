@@ -285,6 +285,7 @@ export default defineComponent({
       hiddenLayersConfig: [64, 64] as number[],
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,  // Track the last submitted best score to prevent duplicate submissions
+      _loggedNetworkSave: false,  // Debug flag
     }
   },
   computed: {
@@ -438,13 +439,24 @@ export default defineComponent({
       
       // Store network data in localStorage for the detail window
       try {
-        localStorage.setItem('flappy-ai-network-data', JSON.stringify({
+        const dataToSave = {
           activations: this.networkActivations,
           qValues: this.qValues,
           selectedAction: this.selectedAction,
-        }))
+          hiddenLayers: this.hiddenLayersConfig,
+        }
+        localStorage.setItem('flappy-ai-network-data', JSON.stringify(dataToSave))
+        // Debug: Log first time
+        if (!this._loggedNetworkSave) {
+          console.log('[App] Network data saved to localStorage:', {
+            hasActivations: !!dataToSave.activations?.length,
+            hiddenLayers: dataToSave.hiddenLayers,
+            origin: window.location.origin,
+          })
+          this._loggedNetworkSave = true
+        }
       } catch (e) {
-        // Ignore storage errors
+        console.warn('[App] Failed to save network data:', e)
       }
     },
     updateEpsilon(value: number) {

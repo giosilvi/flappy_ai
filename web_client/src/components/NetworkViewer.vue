@@ -6,68 +6,80 @@
       <span class="expand-hint">🔍</span>
     </div>
 
-    <!-- Static Network Diagram -->
-    <svg class="network-svg" viewBox="0 0 320 200" preserveAspectRatio="xMidYMid meet">
+    <!-- Dynamic Network Diagram -->
+    <svg class="network-svg" :viewBox="`0 0 ${svgWidth} 200`" preserveAspectRatio="xMidYMid meet">
       <!-- Layer labels -->
-      <text x="40" y="15" class="layer-label" text-anchor="middle">Input</text>
-      <text x="120" y="15" class="layer-label" text-anchor="middle">H1</text>
-      <text x="200" y="15" class="layer-label" text-anchor="middle">H2</text>
-      <text x="280" y="15" class="layer-label" text-anchor="middle">Output</text>
+      <text :x="layerPositions[0]" y="15" class="layer-label" text-anchor="middle">Input</text>
+      <text 
+        v-for="(_, i) in hiddenLayers" 
+        :key="'hl-'+i" 
+        :x="layerPositions[i + 1]" 
+        y="15" 
+        class="layer-label" 
+        text-anchor="middle"
+      >H{{ i + 1 }}</text>
+      <text :x="layerPositions[layerPositions.length - 1]" y="15" class="layer-label" text-anchor="middle">Output</text>
 
-      <!-- Static edges (simplified) -->
+      <!-- Dynamic edges -->
       <g class="edges" opacity="0.3">
-        <!-- Input to H1 -->
-        <line v-for="i in 6" :key="'ih1-'+i" :x1="50" :y1="20 + i * 25" x2="110" y2="65" stroke="#4a90a4" stroke-width="0.5"/>
-        <line v-for="i in 6" :key="'ih1b-'+i" :x1="50" :y1="20 + i * 25" x2="110" y2="95" stroke="#4a90a4" stroke-width="0.5"/>
-        <line v-for="i in 6" :key="'ih1c-'+i" :x1="50" :y1="20 + i * 25" x2="110" y2="125" stroke="#4a90a4" stroke-width="0.5"/>
-        
-        <!-- H1 to H2 -->
-        <line x1="130" y1="65" x2="190" y2="65" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="65" x2="190" y2="95" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="65" x2="190" y2="125" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="95" x2="190" y2="65" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="95" x2="190" y2="95" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="95" x2="190" y2="125" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="125" x2="190" y2="65" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="125" x2="190" y2="95" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="130" y1="125" x2="190" y2="125" stroke="#4a90a4" stroke-width="0.5"/>
-        
-        <!-- H2 to Output -->
-        <line x1="210" y1="65" x2="270" y2="75" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="210" y1="65" x2="270" y2="115" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="210" y1="95" x2="270" y2="75" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="210" y1="95" x2="270" y2="115" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="210" y1="125" x2="270" y2="75" stroke="#4a90a4" stroke-width="0.5"/>
-        <line x1="210" y1="125" x2="270" y2="115" stroke="#4a90a4" stroke-width="0.5"/>
+        <!-- Edges between each layer pair -->
+        <template v-for="(_, layerIdx) in allLayers.slice(0, -1)" :key="'edges-'+layerIdx">
+          <line 
+            v-for="edge in getEdges(layerIdx)" 
+            :key="edge.key"
+            :x1="edge.x1" 
+            :y1="edge.y1" 
+            :x2="edge.x2" 
+            :y2="edge.y2" 
+            stroke="#4a90a4" 
+            stroke-width="0.5"
+          />
+        </template>
       </g>
 
       <!-- Input nodes with live values -->
       <g class="input-layer">
-        <g v-for="(label, i) in inputLabels" :key="'in-'+i" :transform="`translate(40, ${30 + i * 25})`">
+        <g v-for="(label, i) in inputLabels" :key="'in-'+i" :transform="`translate(${layerPositions[0]}, ${getNodeY(6, i)})`">
           <circle r="8" :fill="getInputColor(i)" stroke="#3d3d5a" stroke-width="1"/>
           <text x="-12" y="4" class="input-label" text-anchor="end">{{ label }}</text>
         </g>
       </g>
 
-      <!-- Hidden layer nodes (static) -->
+      <!-- Hidden layer nodes (dynamic) -->
       <g class="hidden-layers">
-        <!-- H1 -->
-        <circle cx="120" cy="65" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <circle cx="120" cy="95" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <circle cx="120" cy="125" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <text x="120" y="155" class="layer-size" text-anchor="middle">(64)</text>
-        
-        <!-- H2 -->
-        <circle cx="200" cy="65" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <circle cx="200" cy="95" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <circle cx="200" cy="125" r="6" fill="#2a4a5a" stroke="#3d3d5a"/>
-        <text x="200" y="155" class="layer-size" text-anchor="middle">(64)</text>
+        <g v-for="(size, layerIdx) in hiddenLayers" :key="'hidden-'+layerIdx">
+          <!-- Show up to 5 nodes visually, with ellipsis for more -->
+          <circle 
+            v-for="nodeIdx in Math.min(displayNodes, size)" 
+            :key="'h'+layerIdx+'-'+nodeIdx"
+            :cx="layerPositions[layerIdx + 1]" 
+            :cy="getNodeY(Math.min(displayNodes, size), nodeIdx - 1)"
+            r="6" 
+            fill="#2a4a5a" 
+            stroke="#3d3d5a"
+          />
+          <!-- Ellipsis if more than displayNodes -->
+          <text 
+            v-if="size > displayNodes"
+            :x="layerPositions[layerIdx + 1]"
+            :y="getNodeY(displayNodes, displayNodes - 1) + 15"
+            class="layer-ellipsis"
+            text-anchor="middle"
+          >⋮</text>
+          <!-- Layer size label -->
+          <text 
+            :x="layerPositions[layerIdx + 1]" 
+            y="175" 
+            class="layer-size" 
+            text-anchor="middle"
+          >({{ size }})</text>
+        </g>
       </g>
 
       <!-- Output nodes with live values -->
       <g class="output-layer">
         <!-- Idle -->
-        <g transform="translate(280, 75)">
+        <g :transform="`translate(${layerPositions[layerPositions.length - 1]}, 75)`">
           <circle 
             r="12" 
             :fill="selectedAction === 0 ? '#00d9ff' : '#2a4a5a'" 
@@ -77,7 +89,7 @@
           <text x="18" y="4" class="output-label">idle</text>
         </g>
         <!-- Flap -->
-        <g transform="translate(280, 115)">
+        <g :transform="`translate(${layerPositions[layerPositions.length - 1]}, 115)`">
           <circle 
             r="12" 
             :fill="selectedAction === 1 ? '#ff6b9d' : '#2a4a5a'" 
@@ -150,7 +162,17 @@ export default defineComponent({
   data() {
     return {
       inputLabels: INPUT_LABELS,
+      displayNodes: 5, // Max nodes to show visually per layer
     }
+  },
+  watch: {
+    // Save network data when activations update (for the detail view)
+    activations: {
+      handler() {
+        this.saveNetworkData()
+      },
+      deep: true,
+    },
   },
   computed: {
     networkInfo(): string {
@@ -161,8 +183,56 @@ export default defineComponent({
     inputValues(): number[] {
       return this.activations[0] || [0, 0, 0, 0, 0, 0]
     },
+    // All layer sizes: [input, hidden1, hidden2, ..., output]
+    allLayers(): number[] {
+      return [6, ...this.hiddenLayers, 2]
+    },
+    // Calculate SVG width based on number of layers
+    svgWidth(): number {
+      const numLayers = this.allLayers.length
+      return 60 + numLayers * 70 // 60 padding + 70 per layer
+    },
+    // Calculate X positions for each layer
+    layerPositions(): number[] {
+      const numLayers = this.allLayers.length
+      const spacing = (this.svgWidth - 80) / (numLayers - 1)
+      return this.allLayers.map((_, i) => 40 + i * spacing)
+    },
   },
   methods: {
+    // Get Y position for a node in a layer
+    getNodeY(layerSize: number, nodeIndex: number): number {
+      const displaySize = Math.min(this.displayNodes, layerSize)
+      const totalHeight = 130 // Available height for nodes
+      const spacing = totalHeight / (displaySize + 1)
+      return 30 + spacing * (nodeIndex + 1)
+    },
+    // Get edges between two layers
+    getEdges(fromLayerIdx: number): Array<{ key: string; x1: number; y1: number; x2: number; y2: number }> {
+      const fromSize = Math.min(this.displayNodes, this.allLayers[fromLayerIdx])
+      const toSize = Math.min(this.displayNodes, this.allLayers[fromLayerIdx + 1])
+      const x1 = this.layerPositions[fromLayerIdx] + 10
+      const x2 = this.layerPositions[fromLayerIdx + 1] - 10
+      
+      const edges: Array<{ key: string; x1: number; y1: number; x2: number; y2: number }> = []
+      
+      // Only draw a subset of edges for visual clarity
+      for (let i = 0; i < fromSize; i++) {
+        for (let j = 0; j < toSize; j++) {
+          // Skip some edges for visual clarity when there are many
+          if (fromSize > 3 && toSize > 3 && (i + j) % 2 !== 0) continue
+          
+          edges.push({
+            key: `e-${fromLayerIdx}-${i}-${j}`,
+            x1,
+            y1: this.getNodeY(fromSize, i),
+            x2,
+            y2: this.getNodeY(toSize, j),
+          })
+        }
+      }
+      return edges
+    },
     getInputColor(index: number): string {
       const value = this.inputValues[index] || 0
       const normalized = Math.max(-1, Math.min(1, value))
@@ -190,6 +260,14 @@ export default defineComponent({
       return value.toFixed(2)
     },
     openDetailView() {
+      // Save current network data to localStorage for the detail view (force save)
+      this.saveNetworkData()
+      console.log('[NetworkViewer] Opening detail view, saved data:', {
+        activations: this.activations?.length,
+        qValues: this.qValues,
+        hiddenLayers: this.hiddenLayers,
+      })
+      
       // Open a new browser window with the network visualization
       const width = 1400
       const height = 800
@@ -201,6 +279,20 @@ export default defineComponent({
         'NetworkVisualization',
         `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,toolbar=no,menubar=no,location=no,status=no`
       )
+    },
+    saveNetworkData() {
+      // Save network data to localStorage for the detail view to read
+      const data = {
+        activations: this.activations,
+        qValues: this.qValues,
+        selectedAction: this.selectedAction,
+        hiddenLayers: this.hiddenLayers,
+      }
+      try {
+        localStorage.setItem('flappy-ai-network-data', JSON.stringify(data))
+      } catch (e) {
+        console.warn('Failed to save network data to localStorage:', e)
+      }
     },
   },
 })
@@ -266,6 +358,11 @@ export default defineComponent({
 .layer-size {
   font-family: var(--font-mono);
   font-size: 8px;
+  fill: var(--color-text-muted);
+}
+
+.layer-ellipsis {
+  font-size: 10px;
   fill: var(--color-text-muted);
 }
 
