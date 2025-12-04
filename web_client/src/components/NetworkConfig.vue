@@ -134,7 +134,6 @@ export default defineComponent({
     return {
       layers: [...this.initialConfig] as number[],
       nodeSizes: [16, 32, 64, 128],
-      maxDisplayNodes: 6,
     }
   },
   computed: {
@@ -158,18 +157,19 @@ export default defineComponent({
     },
     allLayers(): { total: number; displayNodes: number; truncated: boolean }[] {
       const result = []
-      // Input layer (6 nodes)
-      result.push({ total: 6, displayNodes: Math.min(6, this.maxDisplayNodes), truncated: 6 > this.maxDisplayNodes })
-      // Hidden layers
+      // Input layer (6 nodes - show 1)
+      result.push({ total: 6, displayNodes: 1, truncated: true })
+      // Hidden layers: 16→1, 32→2, 64→4, 128→8
       for (const size of this.layers) {
+        const displayNodes = Math.max(1, size / 16)
         result.push({
           total: size,
-          displayNodes: Math.min(size, this.maxDisplayNodes),
-          truncated: size > this.maxDisplayNodes,
+          displayNodes,
+          truncated: size > displayNodes,
         })
       }
-      // Output layer (2 nodes)
-      result.push({ total: 2, displayNodes: 2, truncated: false })
+      // Output layer (2 nodes - show 1)
+      result.push({ total: 2, displayNodes: 1, truncated: true })
       return result
     },
     connections(): { x1: number; y1: number; x2: number; y2: number }[][] {
@@ -181,9 +181,9 @@ export default defineComponent({
         const fromX = this.layerX(li)
         const toX = this.layerX(li + 1)
         
-        // Only draw a subset of connections to avoid clutter
-        const fromNodes = Math.min(fromLayer.displayNodes, 4)
-        const toNodes = Math.min(toLayer.displayNodes, 4)
+        // Draw connections to all displayed nodes
+        const fromNodes = fromLayer.displayNodes
+        const toNodes = toLayer.displayNodes
         
         for (let fi = 0; fi < fromNodes; fi++) {
           for (let ti = 0; ti < toNodes; ti++) {
