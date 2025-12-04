@@ -185,6 +185,7 @@
             :epsilon="effectiveEpsilon"
             :avgReward="avgReward"
             :episodeReward="episodeReward"
+            :episodeLength="episodeLength"
             :loss="loss"
             :episode="episode"
             :bestScore="bestScore"
@@ -269,6 +270,7 @@ export default defineComponent({
       bufferSize: 0,
       totalSteps: 0,
       avgLength: 0,
+      episodeLength: 0,
       isWarmup: true,
       isAutoEval: false,
       autoEvalTrial: 0,
@@ -374,6 +376,7 @@ export default defineComponent({
       episode: number
       avgReward: number
       episodeReward: number
+      episodeLength: number
       epsilon: number
       loss: number
       stepsPerSecond: number
@@ -392,6 +395,7 @@ export default defineComponent({
       // In normal mode, it's set by handleEpisodeEnd
       if (this.fastMode) {
         this.episodeReward = metrics.episodeReward
+        this.episodeLength = metrics.episodeLength
       }
       this.epsilon = metrics.epsilon
       this.loss = metrics.loss
@@ -621,6 +625,7 @@ export default defineComponent({
       this.bufferSize = 0
       this.totalSteps = 0
       this.avgLength = 0
+      this.episodeLength = 0
       this.epsilon = 1.0
       this.autoDecay = true
       this.isWarmup = true
