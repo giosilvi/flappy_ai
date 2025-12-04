@@ -166,7 +166,7 @@ export class WorkerDQNAgent {
             break
 
           case 'weightHealth':
-            this.weightHealthCallback?.(message)
+            this.weightHealthCallback?.({ delta: message.delta, avgSign: message.avgSign })
             break
 
           case 'autoEvalResult':

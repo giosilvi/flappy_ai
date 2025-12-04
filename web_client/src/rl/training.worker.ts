@@ -498,6 +498,8 @@ function startFastMode(
   fastIntervalRewards = []  // Clear interval buffers
   fastIntervalLengths = []
   fastLastMetricsTime = performance.now()
+  fastLastWeightsTime = performance.now()  // Reset weight health timing
+  fastPreviousWeights = null  // Reset for fresh delta calculation
   fastStepsSinceLastMetric = 0
   fastStepsPerSecond = 0
   fastTotalSteps = startingTotalSteps  // Start from the passed step count
@@ -748,4 +750,3 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
 
 // Export types for main thread
 export type { WorkerMessage, WorkerResponse }
-
