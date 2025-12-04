@@ -52,12 +52,17 @@
           :deathPenalty="deathPenalty"
           :stepPenalty="stepPenalty"
           :centerReward="centerReward"
+          :outOfBoundsPenalty="outOfBoundsPenalty"
           :fastMode="fastMode"
           :autoDecay="autoDecay"
           :lrScheduler="lrScheduler"
           :trainFreq="trainFreq"
           :isPaused="isPaused"
           :currentMode="mode"
+          :useGPU="useGPU"
+          :gpuAvailable="gpuAvailable"
+          :gpuBackend="gpuBackend"
+          :numBirds="numBirds"
           @update:epsilon="updateEpsilon"
           @update:learningRate="updateLearningRate"
           @update:epsilonDecaySteps="updateEpsilonDecaySteps"
@@ -65,12 +70,15 @@
           @update:deathPenalty="updateDeathPenalty"
           @update:stepPenalty="updateStepPenalty"
           @update:centerReward="updateCenterReward"
+          @update:outOfBoundsPenalty="updateOutOfBoundsPenalty"
           @update:fastMode="updateFastMode"
           @update:autoDecay="updateAutoDecay"
           @update:lrScheduler="updateLRScheduler"
           @update:trainFreq="updateTrainFreq"
           @update:isPaused="updatePaused"
           @update:mode="changeMode"
+          @update:useGPU="updateUseGPU"
+          @update:numBirds="updateNumBirds"
           @reset="resetTraining"
         />
 
@@ -194,6 +202,12 @@
             :avgLength="avgLength"
             :isTraining="mode === 'training' && !isPaused"
             :isWarmup="isWarmup"
+            :gpuMode="useGPU && fastMode"
+            :recentRewardsFromWorker="gpuRecentRewards"
+            :recentAvgRewardsFromWorker="gpuRecentAvgRewards"
+            :numBirds="numBirds"
+            :gpuBackend="gpuBackend"
+            :trainSteps="trainSteps"
           />
         </div>
       </aside>
@@ -230,6 +244,7 @@ import NetworkConfig from './components/NetworkConfig.vue'
 import Leaderboard from './components/Leaderboard.vue'
 import LeaderboardPanel from './components/LeaderboardPanel.vue'
 import { apiClient, calculateAdjustedScore } from './services/apiClient'
+import { checkGPUSupport } from './rl'
 
 export type GameMode = 'idle' | 'configuring' | 'training' | 'eval' | 'manual'
 
@@ -258,6 +273,7 @@ export default defineComponent({
       deathPenalty: -1.0,
       stepPenalty: -0.01,
       centerReward: 0.1,
+      outOfBoundsPenalty: -0.2,
       fastMode: false,
       autoDecay: true,
       lrScheduler: false,
@@ -286,6 +302,15 @@ export default defineComponent({
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,  // Track the last submitted best score to prevent duplicate submissions
       _loggedNetworkSave: false,  // Debug flag
+      // GPU mode state
+      useGPU: false,
+      gpuAvailable: false,
+      gpuBackend: 'unknown',
+      numBirds: 100,  // Default to 100 birds when GPU is enabled
+      trainSteps: 0,  // Training batch count (from GPU worker)
+      // GPU mode chart histories (from worker)
+      gpuRecentRewards: [] as number[],
+      gpuRecentAvgRewards: [] as number[],
     }
   },
   computed: {
@@ -326,6 +351,18 @@ export default defineComponent({
   async mounted() {
     // Load leaderboard threshold on startup
     await this.refreshLeaderboardThreshold()
+    
+    // Check GPU availability
+    const gpuSupport = checkGPUSupport()
+    this.gpuAvailable = gpuSupport.webgpu || gpuSupport.webgl
+    if (gpuSupport.webgpu) {
+      this.gpuBackend = 'webgpu'
+    } else if (gpuSupport.webgl) {
+      this.gpuBackend = 'webgl'
+    } else {
+      this.gpuBackend = 'cpu'
+    }
+    console.log('[App] GPU support:', gpuSupport, 'backend:', this.gpuBackend)
   },
   methods: {
     async refreshLeaderboardThreshold() {
@@ -385,6 +422,11 @@ export default defineComponent({
       isAutoEval?: boolean
       autoEvalTrial?: number
       autoEvalTrials?: number
+      numBirds?: number
+      gpuBackend?: string
+      recentRewards?: number[]
+      recentAvgRewards?: number[]
+      trainSteps?: number
     }) {
       this.episode = metrics.episode
       this.avgReward = metrics.avgReward
@@ -408,6 +450,24 @@ export default defineComponent({
       this.isAutoEval = metrics.isAutoEval ?? false
       this.autoEvalTrial = metrics.autoEvalTrial ?? 0
       this.autoEvalTrials = metrics.autoEvalTrials ?? 100
+      // Update GPU state from metrics
+      if (metrics.numBirds !== undefined) {
+        this.numBirds = metrics.numBirds
+      }
+      if (metrics.gpuBackend !== undefined) {
+        this.gpuBackend = metrics.gpuBackend
+      }
+      // Update GPU reward histories for charts
+      if (metrics.recentRewards !== undefined) {
+        this.gpuRecentRewards = metrics.recentRewards
+      }
+      if (metrics.recentAvgRewards !== undefined) {
+        this.gpuRecentAvgRewards = metrics.recentAvgRewards
+      }
+      // Update train steps count
+      if (metrics.trainSteps !== undefined) {
+        this.trainSteps = metrics.trainSteps
+      }
     },
     handleAutoEvalResult(result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) {
       console.log('[App] Auto-eval result:', result)
@@ -503,6 +563,13 @@ export default defineComponent({
         gameCanvas.setRewardConfig({ centerReward: value })
       }
     },
+    updateOutOfBoundsPenalty(value: number) {
+      this.outOfBoundsPenalty = value
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas) {
+        gameCanvas.setRewardConfig({ outOfBoundsPenalty: value })
+      }
+    },
     updateFastMode(value: boolean) {
       this.fastMode = value
     },
@@ -532,6 +599,20 @@ export default defineComponent({
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas && (gameCanvas as any).setTrainFreq) {
         ;(gameCanvas as any).setTrainFreq(value)
+      }
+    },
+    updateUseGPU(value: boolean) {
+      this.useGPU = value
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas && (gameCanvas as any).setUseGPU) {
+        ;(gameCanvas as any).setUseGPU(value)
+      }
+    },
+    updateNumBirds(value: number) {
+      this.numBirds = value
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas && (gameCanvas as any).setNumBirds) {
+        ;(gameCanvas as any).setNumBirds(value)
       }
     },
     saveCheckpoint() {
@@ -631,6 +712,10 @@ export default defineComponent({
       this.isPaused = false
       this.showGameOver = false
       this.lastSubmittedBestScore = 0  // Reset to allow new submissions
+      // Reset GPU-specific state
+      this.trainSteps = 0
+      this.gpuRecentRewards = []
+      this.gpuRecentAvgRewards = []
       // Go to configuring mode so user can adjust network config and click "Start Training"
       this.mode = 'configuring'
     },

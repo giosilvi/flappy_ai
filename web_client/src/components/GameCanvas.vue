@@ -32,7 +32,7 @@ import {
   type GameAction,
   type RawGameState,
 } from '@/game'
-import { TrainingLoop } from '@/rl'
+import { TrainingLoop, GPUTrainingLoop } from '@/rl'
 
 export default defineComponent({
   name: 'GameCanvas',
@@ -61,6 +61,9 @@ export default defineComponent({
       renderer: null as Renderer | null,
       inputController: null as InputController | null,
       trainingLoop: null as TrainingLoop | null,
+      gpuTrainingLoop: null as GPUTrainingLoop | null,
+      useGPU: false,
+      numBirds: 100,
       animationId: null as number | null,
       trainingTimeoutId: null as number | null,
       isRunning: false,
@@ -100,6 +103,9 @@ export default defineComponent({
     }
     if (this.trainingLoop) {
       this.trainingLoop.dispose()
+    }
+    if (this.gpuTrainingLoop) {
+      this.gpuTrainingLoop.dispose()
     }
   },
   methods: {
@@ -144,20 +150,49 @@ export default defineComponent({
     startTraining(hiddenLayers: number[] = [64, 64]) {
       if (!this.engine || !this.renderer) return
 
-      // Initialize training loop if not already (or reinitialize if architecture changed)
-      if (!this.trainingLoop && this.engine) {
-        this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
-          inputDim: 6,
-          hiddenLayers,
-          actionDim: 2,
-        }, {
-          onStep: (metrics) => {
-            this.$emit('metrics-update', metrics)
-          },
-          onAutoEvalResult: (result) => {
-            this.$emit('auto-eval-result', result)
-          },
-        })
+      // Dispose of existing training loops if switching modes
+      if (this.useGPU && this.trainingLoop) {
+        this.trainingLoop.dispose()
+        this.trainingLoop = null
+      }
+      if (!this.useGPU && this.gpuTrainingLoop) {
+        this.gpuTrainingLoop.dispose()
+        this.gpuTrainingLoop = null
+      }
+
+      if (this.useGPU) {
+        // Initialize GPU training loop
+        if (!this.gpuTrainingLoop && this.engine) {
+          this.gpuTrainingLoop = new GPUTrainingLoop(this.engine as GameEngine, {
+            inputDim: 6,
+            hiddenLayers,
+            actionDim: 2,
+            numBirds: this.numBirds,
+          }, {
+            onStep: (metrics) => {
+              this.$emit('metrics-update', metrics)
+            },
+            onAutoEvalResult: (result) => {
+              this.$emit('auto-eval-result', result)
+            },
+          })
+        }
+      } else {
+        // Initialize CPU training loop
+        if (!this.trainingLoop && this.engine) {
+          this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
+            inputDim: 6,
+            hiddenLayers,
+            actionDim: 2,
+          }, {
+            onStep: (metrics) => {
+              this.$emit('metrics-update', metrics)
+            },
+            onAutoEvalResult: (result) => {
+              this.$emit('auto-eval-result', result)
+            },
+          })
+        }
       }
 
       this.renderer.resetFloor()
@@ -166,8 +201,10 @@ export default defineComponent({
       this.gameOver = false
       this.lastScore = 0
 
-      // Start training (synchronous - pure JS neural network)
-      if (this.trainingLoop) {
+      // Start training
+      if (this.useGPU && this.gpuTrainingLoop) {
+        this.gpuTrainingLoop.start()
+      } else if (this.trainingLoop) {
         this.trainingLoop.start()
       }
 
@@ -177,7 +214,10 @@ export default defineComponent({
     },
 
     runTrainingLoop() {
-      if (!this.isRunning || !this.trainingLoop || !this.renderer || !this.engine) return
+      // Get the active training loop (GPU or CPU)
+      const activeLoop = this.useGPU ? this.gpuTrainingLoop : this.trainingLoop
+      
+      if (!this.isRunning || !activeLoop || !this.renderer || !this.engine) return
       
       if (this.internalPaused) {
         this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
@@ -188,15 +228,15 @@ export default defineComponent({
       const elapsed = now - this.lastFrameTime
 
       if (this.fastMode) {
-        this.trainingLoop.setFastMode(true)
+        activeLoop.setFastMode(true)
 
         // Periodically refresh metrics from the worker-driven loop
         if (now - this.lastMetricsTime >= 500) {
-          const metrics = this.trainingLoop.getMetrics()
+          const metrics = activeLoop.getMetrics()
           this.$emit('metrics-update', metrics)
           
           // Emit network visualization with REAL activations
-          const viz = this.trainingLoop.getNetworkVisualization()
+          const viz = activeLoop.getNetworkVisualization()
           this.$emit('network-update', viz)
           
           this.lastMetricsTime = now
@@ -207,13 +247,13 @@ export default defineComponent({
       }
 
       // Ensure worker fast mode is disabled when returning to normal speed
-      this.trainingLoop.setFastMode(false)
+      activeLoop.setFastMode(false)
 
       // Normal mode: run at game speed (30fps)
       if (elapsed >= GameConfig.FRAME_TIME) {
         this.lastFrameTime = now - (elapsed % GameConfig.FRAME_TIME)
 
-        const stepResult = this.trainingLoop.step()
+        const stepResult = activeLoop.step()
         
         // Capture the reward for display
         if (stepResult?.result) {
@@ -230,17 +270,17 @@ export default defineComponent({
 
         // Render every frame in normal mode (with reward indicator)
         const gameState = this.engine.getState()
-        const cumulativeReward = this.trainingLoop.getMetrics().episodeReward
+        const cumulativeReward = activeLoop.getMetrics().episodeReward
         this.renderer.render(gameState as RawGameState, false, this.lastReward, cumulativeReward)
       }
 
       // Update UI at game FPS to match game steps
       if (now - this.lastMetricsTime >= GameConfig.FRAME_TIME) {
-        const metrics = this.trainingLoop.getMetrics()
+        const metrics = activeLoop.getMetrics()
         this.$emit('metrics-update', metrics)
 
         // Emit network visualization with REAL activations
-        const viz = this.trainingLoop.getNetworkVisualization()
+        const viz = activeLoop.getNetworkVisualization()
         this.$emit('network-update', viz)
 
         this.lastMetricsTime = now
@@ -360,14 +400,17 @@ export default defineComponent({
 
     setEpsilon(value: number) {
       this.trainingLoop?.setEpsilon(value)
+      this.gpuTrainingLoop?.setEpsilon(value)
     },
 
     setAutoDecay(enabled: boolean) {
       this.trainingLoop?.setAutoDecay(enabled)
+      this.gpuTrainingLoop?.setAutoDecay(enabled)
     },
 
     setEpsilonDecaySteps(steps: number) {
       this.trainingLoop?.setEpsilonDecaySteps(steps)
+      this.gpuTrainingLoop?.setEpsilonDecaySteps?.(steps)
     },
 
     /**
@@ -485,31 +528,109 @@ export default defineComponent({
 
     setLearningRate(lr: number) {
       this.trainingLoop?.setLearningRate(lr)
+      this.gpuTrainingLoop?.setLearningRate(lr)
     },
 
     setLRScheduler(enabled: boolean) {
       this.trainingLoop?.setLRScheduler(enabled)
+      // GPU training loop doesn't have LR scheduler yet
     },
 
     setTrainFreq(value: number) {
       this.trainingLoop?.setTrainFreq(value)
+      // GPU training loop handles train freq internally
     },
 
-    setRewardConfig(config: Partial<{ passPipe: number; deathPenalty: number; stepPenalty: number; centerReward: number; flapCost: number }>) {
+    setRewardConfig(config: Partial<{ passPipe: number; deathPenalty: number; stepPenalty: number; centerReward: number; flapCost: number; outOfBoundsPenalty: number }>) {
       this.trainingLoop?.setRewardConfig(config)
+      this.gpuTrainingLoop?.setRewardConfig(config)
+    },
+
+    setUseGPU(value: boolean) {
+      if (this.useGPU === value) return
+      
+      const wasRunning = this.isRunning
+      const wasFastMode = this.fastMode
+      
+      // Save current weights if we have a training loop
+      let savedWeights: { weights: number[][][]; biases: number[][] } | null = null
+      let savedEpsilon = 1.0
+      let savedEpisode = 0
+      
+      if (this.useGPU && this.gpuTrainingLoop) {
+        const agent = this.gpuTrainingLoop.getAgent()
+        if (agent) {
+          savedWeights = agent.save()
+          savedEpsilon = agent.getEpsilon()
+        }
+        savedEpisode = this.gpuTrainingLoop.getMetrics().episode
+        // Stop and dispose GPU loop
+        if (wasFastMode) this.gpuTrainingLoop.setFastMode(false)
+        this.gpuTrainingLoop.dispose()
+        this.gpuTrainingLoop = null
+      } else if (!this.useGPU && this.trainingLoop) {
+        const agent = this.trainingLoop.getAgent()
+        if (agent) {
+          savedWeights = agent.save()
+          savedEpsilon = agent.getEpsilon()
+        }
+        savedEpisode = this.trainingLoop.getMetrics().episode
+        // Stop and dispose CPU loop
+        if (wasFastMode) this.trainingLoop.setFastMode(false)
+        this.trainingLoop.dispose()
+        this.trainingLoop = null
+      }
+      
+      // Change mode
+      this.useGPU = value
+      console.log(`[GameCanvas] Switched to ${value ? 'GPU' : 'CPU'} mode`)
+      
+      // If training was running, restart with the new backend
+      if (wasRunning && this.engine) {
+        // Create new training loop
+        this.startTraining(this.hiddenLayersConfig)
+        
+        // Restore weights and epsilon
+        if (savedWeights) {
+          const newAgent = value ? this.gpuTrainingLoop?.getAgent() : this.trainingLoop?.getAgent()
+          if (newAgent) {
+            newAgent.load(savedWeights)
+            newAgent.setEpsilon(savedEpsilon)
+            console.log(`[GameCanvas] Restored weights and epsilon (${savedEpsilon.toFixed(3)})`)
+          }
+        }
+        
+        // Restore fast mode if it was active
+        if (wasFastMode) {
+          const activeLoop = value ? this.gpuTrainingLoop : this.trainingLoop
+          activeLoop?.setFastMode(true)
+        }
+      }
+    },
+
+    setNumBirds(value: number) {
+      this.numBirds = value
+      if (this.gpuTrainingLoop) {
+        this.gpuTrainingLoop.setNumBirds(value)
+      }
     },
 
     resetTraining() {
-      // Stop and dispose of the training loop
+      // Stop and dispose of the training loops
       // User will need to click "Start Training" to begin again (with potentially new architecture)
       if (this.trainingLoop) {
-        // Stop fast mode if active
         if (this.fastMode) {
           this.trainingLoop.setFastMode(false)
         }
-        // Dispose of the training loop - it will be recreated with new config
         this.trainingLoop.dispose()
         this.trainingLoop = null
+      }
+      if (this.gpuTrainingLoop) {
+        if (this.fastMode) {
+          this.gpuTrainingLoop.setFastMode(false)
+        }
+        this.gpuTrainingLoop.dispose()
+        this.gpuTrainingLoop = null
       }
       // Cancel animation loop
       if (this.animationId) {
@@ -520,6 +641,8 @@ export default defineComponent({
     },
 
     setPaused(paused: boolean) {
+      const activeLoop = this.useGPU ? this.gpuTrainingLoop : this.trainingLoop
+      
       if (paused) {
         this.internalPaused = true
         if (this.animationId !== null) {
@@ -531,8 +654,8 @@ export default defineComponent({
           this.trainingTimeoutId = null
         }
         // Stop fast training in worker when pausing
-        if (this.fastMode && this.trainingLoop) {
-          this.trainingLoop.setFastMode(false)
+        if (this.fastMode && activeLoop) {
+          activeLoop.setFastMode(false)
         }
       } else {
         this.internalPaused = false
@@ -540,10 +663,10 @@ export default defineComponent({
           this.lastFrameTime = performance.now()
           this.lastMetricsTime = performance.now()
           // Resume fast training if it was active
-          if (this.fastMode && this.trainingLoop) {
-            this.trainingLoop.setFastMode(true)
+          if (this.fastMode && activeLoop) {
+            activeLoop.setFastMode(true)
           }
-          if (this.trainingLoop) {
+          if (activeLoop) {
             this.runTrainingLoop()
           } else {
             this.gameLoop()

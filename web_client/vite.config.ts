@@ -12,6 +12,9 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Allow access via ngrok tunnels (e.g. *.ngrok-free.dev)
+    // so friends can reach your local dev server from the internet.
+    allowedHosts: ['.ngrok-free.dev'],
     proxy: {
       // Proxy API requests to the backend during development
       '/api': {

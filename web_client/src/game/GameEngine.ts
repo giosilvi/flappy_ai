@@ -317,10 +317,18 @@ export class GameEngine {
     if (this.state.done) {
       reward = this.rewardConfig.deathPenalty
     } else {
-      // Out of bounds penalty (going above screen) - hardcoded like Python
-      // This teaches the agent to stay within the visible viewport
+      // Out of bounds penalty - teaches agent to stay within visible viewport
+      const outOfBoundsPenalty = this.rewardConfig.outOfBoundsPenalty || -0.2
+      
+      // Above screen (y < 0)
       if (this.state.birdY < 0) {
-        reward -= 0.1 // Fixed penalty for being above viewport
+        reward += outOfBoundsPenalty
+      }
+      
+      // Too close to floor (bottom 10% of screen, before collision)
+      const dangerZone = GameConfig.VIEWPORT_HEIGHT * 0.9
+      if (this.state.birdY + GameConfig.BIRD.HEIGHT > dangerZone) {
+        reward += outOfBoundsPenalty
       }
     }
 

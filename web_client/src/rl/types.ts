@@ -14,6 +14,13 @@ export interface TrainingMetrics {
   isAutoEval?: boolean  // True when running automatic evaluation
   autoEvalTrial?: number  // Current trial number (1-10)
   autoEvalTrials?: number  // Total trials in auto-eval
+  numBirds?: number  // Number of parallel bird simulations (GPU mode)
+  gpuBackend?: string  // GPU backend in use ('webgpu', 'webgl', or 'cpu')
+  batchSize?: number  // Current batch size for training
+  trainSteps?: number  // Total training steps (batch updates)
+  // GPU mode reward history for charts
+  recentRewards?: number[]  // Recent episode rewards (last 50-100)
+  recentAvgRewards?: number[]  // Recent avg rewards for trend chart
 }
 
 export interface AutoEvalResult {

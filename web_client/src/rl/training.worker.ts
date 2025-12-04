@@ -93,7 +93,8 @@ const LR_SCHEDULER_MIN = 0.00001   // Minimum learning rate
 
 // Auto-eval state
 let autoEvalEnabled: boolean = true  // Enabled by default
-let autoEvalInterval: number = 500   // Run eval every N episodes
+// Run eval meno spesso: ogni 5000 episodi invece di 500 per ridurre le pause
+let autoEvalInterval: number = 5000  // Run eval every N episodes
 let autoEvalTrials: number = 100     // Number of greedy trials per eval
 let autoEvalRunning: boolean = false
 let autoEvalCurrentTrial: number = 0

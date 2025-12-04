@@ -67,6 +67,29 @@
       </div>
     </div>
 
+    <!-- GPU Status (only in GPU mode) -->
+    <div class="gpu-status" v-if="gpuMode">
+      <div class="gpu-status-header">
+        <span class="gpu-icon">🎮</span>
+        <span class="gpu-label">GPU Training Active</span>
+        <span class="gpu-backend-badge" :class="gpuBackendClass">{{ gpuBackendLabel }}</span>
+      </div>
+      <div class="gpu-stats">
+        <div class="gpu-stat">
+          <span class="gpu-stat-label">Birds</span>
+          <span class="gpu-stat-value">{{ formatNumber(numBirds) }}</span>
+        </div>
+        <div class="gpu-stat">
+          <span class="gpu-stat-label">Episodes</span>
+          <span class="gpu-stat-value">{{ formatNumber(episode) }}</span>
+        </div>
+        <div class="gpu-stat">
+          <span class="gpu-stat-label">Train Batches</span>
+          <span class="gpu-stat-value">{{ formatNumber(trainSteps) }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Episode Reward Chart -->
     <div class="metrics-chart" v-if="episodeRewardHistory.length > 1">
       <div class="chart-header">
@@ -164,6 +187,31 @@ export default defineComponent({
       type: Boolean,
       default: false,
     },
+    // GPU mode specific props
+    gpuMode: {
+      type: Boolean,
+      default: false,
+    },
+    recentRewardsFromWorker: {
+      type: Array as () => number[],
+      default: () => [],
+    },
+    recentAvgRewardsFromWorker: {
+      type: Array as () => number[],
+      default: () => [],
+    },
+    numBirds: {
+      type: Number,
+      default: 1,
+    },
+    gpuBackend: {
+      type: String,
+      default: 'cpu',
+    },
+    trainSteps: {
+      type: Number,
+      default: 0,
+    },
   },
   data() {
     return {
@@ -219,6 +267,16 @@ export default defineComponent({
       if (this.currentSmoothedReward < -0.3) return 'text-danger'
       return 'text-muted'
     },
+    gpuBackendLabel(): string {
+      if (this.gpuBackend === 'webgpu') return 'WebGPU'
+      if (this.gpuBackend === 'webgl') return 'WebGL'
+      return 'CPU'
+    },
+    gpuBackendClass(): string {
+      if (this.gpuBackend === 'webgpu') return 'backend-webgpu'
+      if (this.gpuBackend === 'webgl') return 'backend-webgl'
+      return 'backend-cpu'
+    },
   },
   watch: {
     episode(newVal: number, oldVal: number) {
@@ -234,7 +292,12 @@ export default defineComponent({
         return
       }
       
-      // Only add to history when episode changes
+      // In GPU mode, we use worker-provided histories instead
+      if (this.gpuMode) {
+        return  // Let the worker history watchers handle it
+      }
+      
+      // CPU mode: Only add to history when episode changes
       if (newVal !== oldVal && newVal > 0) {
         // Store episode reward for immediate feedback
         this.episodeRewardHistory.push(this.episodeReward)
@@ -263,6 +326,53 @@ export default defineComponent({
           }
         }
         
+        this.$nextTick(() => this.drawCharts())
+      }
+    },
+    // Watch GPU mode reward histories from worker
+    recentRewardsFromWorker: {
+      handler(newVal: number[]) {
+        if (!this.gpuMode || !newVal || newVal.length === 0) return
+        
+        // Replace local history with worker's history
+        this.episodeRewardHistory = [...newVal]
+        
+        // Update full history for trend (using smoothing)
+        if (newVal.length > 0) {
+          // Take every N points to smooth
+          const smoothStep = Math.max(1, Math.floor(newVal.length / 50))
+          const smoothed: number[] = []
+          for (let i = 0; i < newVal.length; i += smoothStep) {
+            const chunk = newVal.slice(i, Math.min(i + smoothStep, newVal.length))
+            const avg = chunk.reduce((a, b) => a + b, 0) / chunk.length
+            smoothed.push(avg)
+          }
+          this.fullHistory = smoothed
+        }
+        
+        this.$nextTick(() => this.drawCharts())
+      },
+      deep: true,
+    },
+    recentAvgRewardsFromWorker: {
+      handler(newVal: number[]) {
+        if (!this.gpuMode || !newVal || newVal.length === 0) return
+        
+        // Replace local history with worker's history
+        this.avgRewardHistory = [...newVal]
+        this.$nextTick(() => this.drawCharts())
+      },
+      deep: true,
+    },
+    // Reset histories when switching GPU mode
+    gpuMode(newVal: boolean, oldVal: boolean) {
+      if (newVal !== oldVal) {
+        this.episodeRewardHistory = []
+        this.avgRewardHistory = []
+        this.fullHistory = []
+        this.fullHistoryEpisodeCount = 0
+        this.pendingRewards = []
+        this.smoothingWindow = 10
         this.$nextTick(() => this.drawCharts())
       }
     },
@@ -707,5 +817,81 @@ export default defineComponent({
 
 .text-muted {
   color: var(--color-text-muted);
+}
+
+/* GPU Status */
+.gpu-status {
+  background: linear-gradient(135deg, rgba(0, 217, 255, 0.1), rgba(0, 217, 255, 0.05));
+  border: 1px solid rgba(0, 217, 255, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.gpu-status-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-xs);
+}
+
+.gpu-icon {
+  font-size: 1rem;
+}
+
+.gpu-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  flex: 1;
+}
+
+.gpu-backend-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+}
+
+.backend-webgpu {
+  background: linear-gradient(135deg, #00d9ff, #00ff88);
+  color: #000;
+}
+
+.backend-webgl {
+  background: linear-gradient(135deg, #ff9800, #ff5722);
+  color: #000;
+}
+
+.backend-cpu {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-text-muted);
+}
+
+.gpu-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--spacing-xs);
+}
+
+.gpu-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.gpu-stat-label {
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.gpu-stat-value {
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: var(--color-primary);
 }
 </style>

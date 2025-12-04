@@ -207,19 +207,85 @@
           />
           <span class="control-hint-text">Reward for moving toward pipe gap</span>
         </div>
+
+        <!-- Out of Bounds Penalty -->
+        <div class="control-group compact">
+          <label class="control-label" :title="outOfBoundsPenaltyTooltip">
+            <span>Out of Bounds</span>
+            <span class="control-value negative">{{ outOfBoundsPenalty.toFixed(2) }}</span>
+          </label>
+          <input
+            type="range"
+            class="form-range"
+            :value="Math.abs(outOfBoundsPenalty)"
+            min="0"
+            max="1"
+            step="0.05"
+            @input="updateOutOfBoundsPenalty"
+          />
+          <span class="control-hint-text">Penalty for going above/below viewport</span>
+        </div>
       </div>
 
-      <!-- Fast Mode Toggle -->
-      <div class="control-group">
-        <label class="toggle-control" :title="fastModeTooltip">
-          <input 
-            type="checkbox" 
-            :checked="fastMode"
-            @change="toggleFastMode"
+      <!-- GPU Acceleration Section -->
+      <div class="control-section">
+        <div class="section-header">
+          Acceleration
+          <span v-if="gpuAvailable" class="gpu-badge">GPU</span>
+        </div>
+
+        <!-- GPU Toggle -->
+        <div class="control-group">
+          <label class="toggle-control" :class="{ 'gpu-enabled': useGPU }" :title="gpuTooltip">
+            <input 
+              type="checkbox" 
+              :checked="useGPU"
+              @change="toggleGPU"
+              :disabled="!gpuAvailable"
+            />
+            <span class="toggle-label">🎮 GPU Training</span>
+            <span class="toggle-hint" v-if="gpuAvailable">({{ gpuBackend }})</span>
+            <span class="toggle-hint unavailable" v-else>(not available)</span>
+          </label>
+        </div>
+
+        <!-- Num Birds (only when GPU enabled) -->
+        <div class="control-group" v-if="useGPU">
+          <label class="control-label" :title="numBirdsTooltip">
+            <span>Parallel Birds</span>
+            <span class="control-value gpu-value">{{ formatNumBirds(numBirds) }}</span>
+          </label>
+          <input
+            type="range"
+            class="form-range gpu-range"
+            :value="numBirdsSliderValue"
+            min="0"
+            max="100"
+            step="1"
+            @input="updateNumBirds"
           />
-          <span class="toggle-label">⚡ Fast Training</span>
-          <span class="toggle-hint">(uses max CPU)</span>
-        </label>
+          <div class="num-birds-presets">
+            <button class="preset-btn" @click="setNumBirds(1)">1</button>
+            <button class="preset-btn" @click="setNumBirds(100)">100</button>
+            <button class="preset-btn" @click="setNumBirds(1000)">1K</button>
+            <button class="preset-btn" @click="setNumBirds(5000)">5K</button>
+            <button class="preset-btn" @click="setNumBirds(10000)">10K</button>
+          </div>
+        </div>
+
+        <!-- Fast Mode Toggle -->
+        <div class="control-group">
+          <label class="toggle-control" :title="fastModeTooltip">
+            <input 
+              type="checkbox" 
+              :checked="fastMode"
+              @change="toggleFastMode"
+            />
+            <span class="toggle-label">⚡ Fast Training</span>
+            <span class="toggle-hint" v-if="useGPU">(GPU + {{ formatNumBirds(numBirds) }} birds)</span>
+            <span class="toggle-hint" v-else>(max CPU)</span>
+          </label>
+        </div>
       </div>
     </div>
 
@@ -261,6 +327,10 @@ export default defineComponent({
       type: Number,
       default: 0.1,
     },
+    outOfBoundsPenalty: {
+      type: Number,
+      default: -0.2,
+    },
     fastMode: {
       type: Boolean,
       default: false,
@@ -289,6 +359,23 @@ export default defineComponent({
       type: String as () => 'configuring' | 'training' | 'eval' | 'manual',
       default: 'training',
     },
+    // GPU-specific props
+    useGPU: {
+      type: Boolean,
+      default: false,
+    },
+    gpuAvailable: {
+      type: Boolean,
+      default: false,
+    },
+    gpuBackend: {
+      type: String,
+      default: 'unknown',
+    },
+    numBirds: {
+      type: Number,
+      default: 1,
+    },
   },
   emits: [
     'update:epsilon',
@@ -298,12 +385,15 @@ export default defineComponent({
     'update:deathPenalty',
     'update:stepPenalty',
     'update:centerReward',
+    'update:outOfBoundsPenalty',
     'update:fastMode',
     'update:autoDecay',
     'update:lrScheduler',
     'update:trainFreq',
     'update:isPaused',
     'update:mode',
+    'update:useGPU',
+    'update:numBirds',
     'reset',
   ],
   computed: {
@@ -355,7 +445,19 @@ Encourages the agent to complete episodes quickly rather than stalling.`
 
 Helps guide the agent during early training by rewarding progress toward the goal.`
     },
+    outOfBoundsPenaltyTooltip(): string {
+      return `Out of Bounds Penalty: Negative reward given when the bird goes above the screen (y < 0) or too close to the floor (bottom 10% of viewport).
+
+This teaches the agent to stay within the visible viewport.`
+    },
     fastModeTooltip(): string {
+      if (this.useGPU) {
+        return `Fast Training (GPU): Runs ${this.formatNumBirds(this.numBirds)} birds in parallel using GPU acceleration.
+
+• Multi-bird simulation fills the replay buffer faster
+• Batch inference on GPU is highly efficient
+• No game visualization for maximum throughput`
+      }
       return `Fast Training: Disables game visualization and runs training at maximum speed using all available CPU.
 
 Useful for long training sessions. The game won't be visible but training will be much faster.`
@@ -364,6 +466,32 @@ Useful for long training sessions. The game won't be visible but training will b
       if (this.trainFreq <= 4) return 'High quality, slower'
       if (this.trainFreq <= 12) return 'Balanced'
       return 'Faster, may need more episodes'
+    },
+    gpuTooltip(): string {
+      if (!this.gpuAvailable) {
+        return `GPU Training: Not available in this browser.
+
+WebGPU/WebGL is required for GPU acceleration. Try using Chrome 113+ or another modern browser.`
+      }
+      return `GPU Training: Uses TensorFlow.js with ${this.gpuBackend.toUpperCase()} backend.
+
+• Batch inference and training on GPU
+• Supports up to 10,000 parallel bird simulations
+• Significantly faster than CPU for large batches`
+    },
+    numBirdsTooltip(): string {
+      return `Parallel Birds: Number of birds simulated in parallel during GPU training.
+
+• More birds = faster experience collection
+• GPU is most efficient with large batches (100-10,000)
+• Each bird contributes experiences to the shared replay buffer
+• Recommended: 100-1000 for most GPUs, up to 10,000 for high-end GPUs`
+    },
+    // Convert numBirds to slider value (logarithmic scale)
+    numBirdsSliderValue(): number {
+      // Map 1-10000 to 0-100 using log scale
+      if (this.numBirds <= 1) return 0
+      return Math.log10(this.numBirds) * 25  // 1->0, 10->25, 100->50, 1000->75, 10000->100
     },
   },
   methods: {
@@ -391,6 +519,10 @@ Useful for long training sessions. The game won't be visible but training will b
     updateCenterReward(event: Event) {
       const value = parseFloat((event.target as HTMLInputElement).value)
       this.$emit('update:centerReward', value)
+    },
+    updateOutOfBoundsPenalty(event: Event) {
+      const value = -parseFloat((event.target as HTMLInputElement).value)
+      this.$emit('update:outOfBoundsPenalty', value)
     },
     toggleFastMode(event: Event) {
       const checked = (event.target as HTMLInputElement).checked
@@ -431,6 +563,32 @@ Useful for long training sessions. The game won't be visible but training will b
       if (confirm('Reset all training progress? This cannot be undone.')) {
         this.$emit('reset')
       }
+    },
+    // GPU methods
+    toggleGPU(event: Event) {
+      const checked = (event.target as HTMLInputElement).checked
+      this.$emit('update:useGPU', checked)
+    },
+    updateNumBirds(event: Event) {
+      // Convert slider value (0-100) to numBirds (1-10000) using log scale
+      const sliderValue = parseFloat((event.target as HTMLInputElement).value)
+      let numBirds: number
+      if (sliderValue <= 0) {
+        numBirds = 1
+      } else {
+        numBirds = Math.round(Math.pow(10, sliderValue / 25))
+      }
+      numBirds = Math.max(1, Math.min(10000, numBirds))
+      this.$emit('update:numBirds', numBirds)
+    },
+    setNumBirds(value: number) {
+      this.$emit('update:numBirds', value)
+    },
+    formatNumBirds(value: number): string {
+      if (value >= 1000) {
+        return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K`
+      }
+      return value.toString()
     },
   },
 })
@@ -709,5 +867,65 @@ Useful for long training sessions. The game won't be visible but training will b
 .form-range:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* GPU-specific styles */
+.gpu-badge {
+  font-size: 0.6rem;
+  padding: 2px 6px;
+  background: linear-gradient(135deg, #00d9ff, #00ff88);
+  color: var(--color-bg-dark);
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  margin-left: var(--spacing-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.toggle-control.gpu-enabled {
+  border-color: #00d9ff;
+  background: rgba(0, 217, 255, 0.1);
+}
+
+.toggle-hint.unavailable {
+  color: var(--color-danger);
+  opacity: 0.7;
+}
+
+.control-value.gpu-value {
+  background: linear-gradient(135deg, rgba(0, 217, 255, 0.2), rgba(0, 255, 136, 0.2));
+  color: #00ff88;
+}
+
+.form-range.gpu-range::-webkit-slider-thumb {
+  background: linear-gradient(135deg, #00d9ff, #00ff88);
+}
+
+.form-range.gpu-range::-moz-range-thumb {
+  background: linear-gradient(135deg, #00d9ff, #00ff88);
+}
+
+.num-birds-presets {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.num-birds-presets .preset-btn {
+  flex: 1;
+  padding: 4px 6px;
+  background: var(--color-bg-light);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.num-birds-presets .preset-btn:hover {
+  background: rgba(0, 217, 255, 0.2);
+  border-color: #00d9ff;
+  color: #00d9ff;
 }
 </style>
