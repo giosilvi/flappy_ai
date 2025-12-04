@@ -62,6 +62,7 @@ let fastIntervalLengths: number[] = []   // Lengths collected since last metrics
 let fastLastMetricsTime: number = 0
 let fastLastWeightsTime: number = 0  // For weight health updates
 let fastPreviousWeights: number[][][] | null = null  // For computing weight deltas
+let fastTrainStepsSinceLastWeightHealth: number = 0  // For normalizing weight deltas
 let fastStepsSinceLastMetric: number = 0
 let fastStepsPerSecond: number = 0
 let fastTotalSteps: number = 0
@@ -338,10 +339,14 @@ function emitFastMetrics(): void {
 function emitWeightHealth(): void {
   if (!policyNetwork) return
   
+  // Don't emit if no training steps happened (e.g., during warmup)
+  if (fastTrainStepsSinceLastWeightHealth === 0) return
+  
   const currentWeights = policyNetwork.toJSON().weights
   
   if (!fastPreviousWeights) {
     fastPreviousWeights = currentWeights
+    fastTrainStepsSinceLastWeightHealth = 0
     return
   }
   
@@ -365,10 +370,13 @@ function emitWeightHealth(): void {
     }
   }
   
-  const delta = Math.sqrt(deltaSum / Math.max(1, count))
+  // Compute raw delta, then normalize by training steps to get per-step delta
+  const rawDelta = Math.sqrt(deltaSum / Math.max(1, count))
+  const delta = rawDelta / fastTrainStepsSinceLastWeightHealth
   const avgSign = count > 0 ? signSum / count : 0
   
   fastPreviousWeights = currentWeights
+  fastTrainStepsSinceLastWeightHealth = 0  // Reset step counter after emission
   
   self.postMessage({ type: 'weightHealth', delta, avgSign } as WorkerResponse)
 }
@@ -406,6 +414,7 @@ function runFastModeBatch(): void {
     if (!isInWarmup() && experienceCount % trainFreq === 0 && replayBuffer.canSample(config.batchSize)) {
       trainOnBatch()
       updateEpsilon()
+      fastTrainStepsSinceLastWeightHealth++
     }
 
     fastEpisodeReward += result.reward
@@ -500,6 +509,7 @@ function startFastMode(
   fastLastMetricsTime = performance.now()
   fastLastWeightsTime = performance.now()  // Reset weight health timing
   fastPreviousWeights = null  // Reset for fresh delta calculation
+  fastTrainStepsSinceLastWeightHealth = 0  // Reset step counter
   fastStepsSinceLastMetric = 0
   fastStepsPerSecond = 0
   fastTotalSteps = startingTotalSteps  // Start from the passed step count
@@ -569,6 +579,14 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         if (!isInWarmup() && experienceCount % trainFreq === 0 && replayBuffer.canSample(config?.batchSize || 16)) {
           trainOnBatch()
           updateEpsilon()
+          fastTrainStepsSinceLastWeightHealth++
+        }
+
+        // Emit weight health periodically in normal mode (every 1 second)
+        const now = performance.now()
+        if (now - fastLastWeightsTime >= 1000) {
+          emitWeightHealth()
+          fastLastWeightsTime = now
         }
         break
       }
@@ -708,6 +726,11 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         lrSchedulerBestAvgReward = -Infinity
         lrSchedulerPatienceCounter = 0
         currentLearningRate = config?.learningRate || 0.0005
+
+        // Reset weight health tracking
+        fastTrainStepsSinceLastWeightHealth = 0
+        fastPreviousWeights = null
+        fastLastWeightsTime = performance.now()
 
         if (replayBuffer) {
           replayBuffer.clear()

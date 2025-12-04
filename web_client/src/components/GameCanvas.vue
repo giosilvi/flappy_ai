@@ -70,8 +70,6 @@ export default defineComponent({
       lastFrameTime: 0,
       lastScore: 0,
       lastMetricsTime: 0,
-      lastWeightUpdateTime: 0, // For throttled weight updates
-      previousWeights: null as number[][][] | null, // For computing weight deltas
       showTouchHint: true,
       isMobile: false,
       // For eval-mode visualization: last observation/Q-values/action actually used
@@ -184,8 +182,6 @@ export default defineComponent({
 
       this.lastFrameTime = performance.now()
       this.lastMetricsTime = performance.now()
-      this.lastWeightUpdateTime = performance.now()
-      this.previousWeights = null  // Reset for fresh delta calculation
       // Use $nextTick to ensure mode prop has updated before starting the loop
       this.$nextTick(() => this.runTrainingLoop())
     },
@@ -262,37 +258,8 @@ export default defineComponent({
         this.lastMetricsTime = now
       }
 
-      // Update weight health for visualization (throttled to 1/second)
-      if (now - this.lastWeightUpdateTime >= 1000) {
-        const weightsData = this.trainingLoop.getWeights()
-        if (weightsData) {
-          const currentWeights = weightsData.weights
-          if (this.previousWeights) {
-            // Compute L2 norm of weight delta and average sign
-            let deltaSum = 0
-            let signSum = 0
-            let count = 0
-            for (let l = 0; l < currentWeights.length; l++) {
-              const prevLayer = this.previousWeights[l]
-              const newLayer = currentWeights[l]
-              if (!prevLayer || !newLayer) continue
-              for (let i = 0; i < newLayer.length; i++) {
-                for (let j = 0; j < newLayer[i].length; j++) {
-                  const diff = newLayer[i][j] - (prevLayer[i]?.[j] ?? 0)
-                  deltaSum += diff * diff
-                  signSum += Math.sign(diff)
-                  count++
-                }
-              }
-            }
-            const delta = Math.sqrt(deltaSum / Math.max(1, count))
-            const avgSign = count > 0 ? signSum / count : 0
-            this.$emit('weight-health-update', { delta, avgSign })
-          }
-          this.previousWeights = currentWeights
-        }
-        this.lastWeightUpdateTime = now
-      }
+      // Weight health is now emitted by the worker via onWeightHealth callback
+      // (normalized by training steps for consistency between normal and fast mode)
 
       this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
     },
@@ -581,7 +548,6 @@ export default defineComponent({
         if (this.isRunning) {
           this.lastFrameTime = performance.now()
           this.lastMetricsTime = performance.now()
-          this.lastWeightUpdateTime = performance.now()
           // Resume fast training if it was active
           if (this.fastMode && this.trainingLoop) {
             this.trainingLoop.setFastMode(true)
@@ -626,7 +592,6 @@ export default defineComponent({
 
       this.lastFrameTime = performance.now()
       this.lastMetricsTime = performance.now()
-      this.lastWeightUpdateTime = performance.now()
       // Use $nextTick to ensure mode prop has updated before starting the loop
       this.$nextTick(() => this.runEvalLoop())
     },
