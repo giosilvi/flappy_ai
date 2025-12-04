@@ -70,6 +70,7 @@ export class WorkerDQNAgent {
   private lastQValues: number[] = [0, 0]
   private lastWorkerMetrics: TrainingMetrics | null = null
   private fastMetricsCallback?: (metrics: TrainingMetrics) => void
+  private weightHealthCallback?: (health: { delta: number; avgSign: number }) => void
   private autoEvalCallback?: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void
 
   // Worker ready state
@@ -162,6 +163,10 @@ export class WorkerDQNAgent {
             this.bufferSize = message.metrics.bufferSize
             this.lastWorkerMetrics = message.metrics
             this.fastMetricsCallback?.(message.metrics)
+            break
+
+          case 'weightHealth':
+            this.weightHealthCallback?.(message)
             break
 
           case 'autoEvalResult':
@@ -390,6 +395,10 @@ export class WorkerDQNAgent {
 
   onFastMetrics(callback: (metrics: TrainingMetrics) => void): void {
     this.fastMetricsCallback = callback
+  }
+
+  onWeightHealth(callback: (health: { delta: number; avgSign: number }) => void): void {
+    this.weightHealthCallback = callback
   }
 
   onAutoEvalResult(callback: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void): void {

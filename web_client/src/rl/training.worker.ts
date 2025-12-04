@@ -32,6 +32,7 @@ type WorkerResponse =
   | { type: 'weights'; data: { weights: number[][][]; biases: number[][] }; steps: number; loss: number }
   | { type: 'ready' }
   | { type: 'fastMetrics'; metrics: TrainingMetrics }
+  | { type: 'weightHealth'; delta: number; avgSign: number }
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'error'; message: string }
 
@@ -59,6 +60,8 @@ let fastRecentLengths: number[] = []     // Rolling window for LR scheduler (50 
 let fastIntervalRewards: number[] = []   // Rewards collected since last metrics emission
 let fastIntervalLengths: number[] = []   // Lengths collected since last metrics emission
 let fastLastMetricsTime: number = 0
+let fastLastWeightsTime: number = 0  // For weight health updates
+let fastPreviousWeights: number[][][] | null = null  // For computing weight deltas
 let fastStepsSinceLastMetric: number = 0
 let fastStepsPerSecond: number = 0
 let fastTotalSteps: number = 0
@@ -332,6 +335,44 @@ function emitFastMetrics(): void {
   self.postMessage({ type: 'fastMetrics', metrics } as WorkerResponse)
 }
 
+function emitWeightHealth(): void {
+  if (!policyNetwork) return
+  
+  const currentWeights = policyNetwork.toJSON().weights
+  
+  if (!fastPreviousWeights) {
+    fastPreviousWeights = currentWeights
+    return
+  }
+  
+  // Compute L2 norm of weight delta and average sign
+  let deltaSum = 0
+  let signSum = 0
+  let count = 0
+  
+  for (let l = 0; l < currentWeights.length; l++) {
+    const prevLayer = fastPreviousWeights[l]
+    const newLayer = currentWeights[l]
+    if (!prevLayer || !newLayer) continue
+    
+    for (let i = 0; i < newLayer.length; i++) {
+      for (let j = 0; j < newLayer[i].length; j++) {
+        const diff = newLayer[i][j] - (prevLayer[i]?.[j] ?? 0)
+        deltaSum += diff * diff
+        signSum += Math.sign(diff)
+        count++
+      }
+    }
+  }
+  
+  const delta = Math.sqrt(deltaSum / Math.max(1, count))
+  const avgSign = count > 0 ? signSum / count : 0
+  
+  fastPreviousWeights = currentWeights
+  
+  self.postMessage({ type: 'weightHealth', delta, avgSign } as WorkerResponse)
+}
+
 function runFastModeBatch(): void {
   if (!fastModeRunning || !fastEngine || !config || !policyNetwork || !replayBuffer) {
     return
@@ -418,6 +459,12 @@ function runFastModeBatch(): void {
     fastStepsSinceLastMetric = 0
     fastLastMetricsTime = now
     emitFastMetrics()
+  }
+
+  // Emit weight health metrics (every 1 second)
+  if (now - fastLastWeightsTime >= 1000) {
+    emitWeightHealth()
+    fastLastWeightsTime = now
   }
 
   // Don't continue if auto-eval is running
