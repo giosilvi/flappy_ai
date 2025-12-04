@@ -4,16 +4,13 @@
  */
 
 export { ReplayBuffer, type Transition } from './ReplayBuffer'
-export { NeuralNetwork, createDQNNetwork, type NetworkConfig } from './NeuralNetwork'
+export { NeuralNetwork, createDQNNetwork, createNetworkPair, type NetworkConfig } from './NeuralNetwork'
 
-// Legacy DQNAgent (for reference/fallback)
-export { DQNAgent } from './DQNAgent'
-
-// Worker-based agent (recommended)
+// Worker-based agent
 export { WorkerDQNAgent, DefaultDQNConfig, type DQNConfig } from './WorkerDQNAgent'
 
 export { TrainingLoop, type TrainingCallbacks } from './TrainingLoop'
-export type { TrainingMetrics } from './types'
+export type { TrainingMetrics, AutoEvalResult } from './types'
 
 // Network visualization type (simplified - no weights)
 export interface NetworkVisualization {

@@ -4,10 +4,10 @@
  */
 
 import { GameEngine, DefaultObservationConfig, DefaultRewardConfig, type ObservationConfig, type RewardConfig } from '../game'
-import { NeuralNetwork, createDQNNetwork } from './NeuralNetwork'
+import { NeuralNetwork, createNetworkPair } from './NeuralNetwork'
 import { ReplayBuffer, type Transition } from './ReplayBuffer'
-import type { DQNConfig } from './DQNAgent'
-import type { TrainingMetrics } from './types'
+import type { DQNConfig } from './WorkerDQNAgent'
+import type { TrainingMetrics, AutoEvalResult } from './types'
 
 // Message types sent TO worker
 type WorkerMessage =
@@ -26,15 +26,6 @@ type WorkerMessage =
   | { type: 'startFast'; rewardConfig?: Partial<RewardConfig>; observationConfig?: Partial<ObservationConfig>; startingEpisode?: number; startingTotalSteps?: number }
   | { type: 'stopFast' }
   | { type: 'reset' }
-
-// Auto-eval result type
-interface AutoEvalResult {
-  avgScore: number
-  maxScore: number
-  minScore: number
-  scores: number[]
-  episode: number
-}
 
 // Message types sent FROM worker
 type WorkerResponse =
@@ -63,8 +54,10 @@ let fastEpisodeReward: number = 0
 let fastEpisodeLength: number = 0
 let fastLastCompletedReward: number = 0  // Track last completed episode's reward
 let fastLastCompletedLength: number = 0  // Track last completed episode's length
-let fastRecentRewards: number[] = []
-let fastRecentLengths: number[] = []
+let fastRecentRewards: number[] = []     // Rolling window for LR scheduler (50 episodes)
+let fastRecentLengths: number[] = []     // Rolling window for LR scheduler (50 episodes)
+let fastIntervalRewards: number[] = []   // Rewards collected since last metrics emission
+let fastIntervalLengths: number[] = []   // Lengths collected since last metrics emission
 let fastLastMetricsTime: number = 0
 let fastStepsSinceLastMetric: number = 0
 let fastStepsPerSecond: number = 0
@@ -302,15 +295,14 @@ function finishAutoEval(): void {
 function emitFastMetrics(): void {
   if (!config || !replayBuffer) return
 
-  const avgReward =
-    fastRecentRewards.length > 0
-      ? fastRecentRewards.reduce((a, b) => a + b, 0) / fastRecentRewards.length
-      : 0
+  // Only emit if we have completed episodes in this interval
+  if (fastIntervalRewards.length === 0) {
+    return  // No episodes completed yet, wait for next interval
+  }
 
-  const avgLength =
-    fastRecentLengths.length > 0
-      ? fastRecentLengths.reduce((a, b) => a + b, 0) / fastRecentLengths.length
-      : 0
+  // Compute interval average (episodes completed in last ~500ms)
+  const avgReward = fastIntervalRewards.reduce((a, b) => a + b, 0) / fastIntervalRewards.length
+  const avgLength = fastIntervalLengths.reduce((a, b) => a + b, 0) / fastIntervalLengths.length
 
   const metrics: TrainingMetrics = {
     episode: fastEpisode,
@@ -327,8 +319,15 @@ function emitFastMetrics(): void {
     learningRate: currentLearningRate,
   }
 
-  // Update LR scheduler based on avg reward
-  updateLRScheduler(avgReward)
+  // Clear interval buffers after emitting
+  fastIntervalRewards = []
+  fastIntervalLengths = []
+
+  // Update LR scheduler based on rolling 50-episode average (not interval average)
+  const lrAvgReward = fastRecentRewards.length > 0
+    ? fastRecentRewards.reduce((a, b) => a + b, 0) / fastRecentRewards.length
+    : 0
+  updateLRScheduler(lrAvgReward)
 
   self.postMessage({ type: 'fastMetrics', metrics } as WorkerResponse)
 }
@@ -343,8 +342,10 @@ function runFastModeBatch(): void {
   for (let i = 0; i < FAST_BATCH_STEPS && fastModeRunning; i++) {
     const state = fastEngine.getObservation()
     const qValues = policyNetwork.predict(state)
+    // When exploring randomly, use 20% flap probability (not 50%)
+    // because flapping has momentum - 50/50 results in constant upward flight
     const action = Math.random() < epsilon
-      ? Math.floor(Math.random() * config.actionDim)
+      ? (Math.random() < 0.2 ? 1 : 0)  // 20% flap, 80% no-flap for balanced exploration
       : qValues[0] > qValues[1] ? 0 : 1
 
     const result = fastEngine.step(action as 0 | 1)
@@ -374,6 +375,12 @@ function runFastModeBatch(): void {
       // Store completed episode stats before resetting
       fastLastCompletedReward = fastEpisodeReward
       fastLastCompletedLength = fastEpisodeLength
+      
+      // Push to interval buffers (for immediate metrics - cleared every ~500ms)
+      fastIntervalRewards.push(fastEpisodeReward)
+      fastIntervalLengths.push(fastEpisodeLength)
+      
+      // Push to rolling window (for LR scheduler - keeps last 50 episodes)
       fastRecentRewards.push(fastEpisodeReward)
       fastRecentLengths.push(fastEpisodeLength)
       if (fastRecentRewards.length > METRICS_WINDOW) {
@@ -441,14 +448,14 @@ function startFastMode(
   fastLastCompletedLength = 0
   fastRecentRewards = []
   fastRecentLengths = []
+  fastIntervalRewards = []  // Clear interval buffers
+  fastIntervalLengths = []
   fastLastMetricsTime = performance.now()
   fastStepsSinceLastMetric = 0
   fastStepsPerSecond = 0
   fastTotalSteps = startingTotalSteps  // Start from the passed step count
 
-  // Emit metrics immediately so UI shows warmup state right away
-  emitFastMetrics()
-  
+  // Don't emit immediately - wait for first episodes to complete
   runFastModeBatch()
 }
 
@@ -475,22 +482,14 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
         observationConfig = DefaultObservationConfig
 
         // Create networks
-        policyNetwork = createDQNNetwork(
+        const networks = createNetworkPair(
           config.inputDim,
           config.hiddenLayers,
           config.actionDim,
           config.learningRate
         )
-
-        targetNetwork = createDQNNetwork(
-          config.inputDim,
-          config.hiddenLayers,
-          config.actionDim,
-          config.learningRate
-        )
-
-        // Copy weights to target
-        targetNetwork.copyWeightsFrom(policyNetwork)
+        policyNetwork = networks.policy
+        targetNetwork = networks.target
 
         // Create replay buffer
         replayBuffer = new ReplayBuffer(config.bufferSize)
@@ -667,21 +666,14 @@ self.onmessage = (e: MessageEvent<WorkerMessage>) => {
 
         // Reinitialize networks
         if (config) {
-          policyNetwork = createDQNNetwork(
+          const networks = createNetworkPair(
             config.inputDim,
             config.hiddenLayers,
             config.actionDim,
             config.learningRate
           )
-
-          targetNetwork = createDQNNetwork(
-            config.inputDim,
-            config.hiddenLayers,
-            config.actionDim,
-            config.learningRate
-          )
-
-          targetNetwork.copyWeightsFrom(policyNetwork)
+          policyNetwork = networks.policy
+          targetNetwork = networks.target
 
           // Send reset weights
           const resetWeights = policyNetwork.toJSON()

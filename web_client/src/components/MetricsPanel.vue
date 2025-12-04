@@ -76,11 +76,11 @@
       <div class="chart-legend">
         <span class="legend-item">
           <span class="legend-color legend-cyan"></span>
-          Raw Reward
+          Interval Avg
         </span>
         <span class="legend-item">
           <span class="legend-color legend-green"></span>
-          Moving Avg
+          MA(50)
         </span>
       </div>
       <canvas ref="rewardChartCanvas" class="chart-canvas"></canvas>
@@ -95,18 +95,18 @@
       <div class="chart-legend">
         <span class="legend-item">
           <span class="legend-color legend-magenta"></span>
-          Raw Length
+          Interval Avg
         </span>
         <span class="legend-item">
           <span class="legend-color legend-purple"></span>
-          Moving Avg
+          MA(50)
         </span>
       </div>
       <canvas ref="lengthChartCanvas" class="chart-canvas"></canvas>
     </div>
 
     <!-- Full Training History Chart -->
-    <div class="metrics-chart metrics-chart-full" v-if="fullRewardHistory.length > 1">
+    <div class="metrics-chart metrics-chart-full" v-if="fullLengthHistory.length > 1">
       <div class="chart-header">
         <span class="chart-title">📈 Training Progress</span>
         <span class="chart-range">Full session (smoothed over {{ smoothingWindow * 5 }}+ episodes)</span>
@@ -114,26 +114,14 @@
       <div class="chart-legend">
         <span class="legend-item">
           <span class="legend-color legend-gold"></span>
-          Avg Reward
-        </span>
-        <span class="legend-item">
-          <span class="legend-color legend-teal"></span>
           Avg Length
         </span>
       </div>
       <canvas ref="fullHistoryCanvas" class="chart-canvas chart-canvas-large"></canvas>
       <div class="chart-stats">
         <span class="chart-stat">
-          <span class="stat-label">Peak Reward</span>
-          <span class="stat-value text-gold">{{ peakReward.toFixed(2) }}</span>
-        </span>
-        <span class="chart-stat">
-          <span class="stat-label">Curr Reward</span>
-          <span class="stat-value" :class="currentRewardTrendClass">{{ currentSmoothedReward.toFixed(2) }}</span>
-        </span>
-        <span class="chart-stat">
           <span class="stat-label">Peak Length</span>
-          <span class="stat-value text-teal">{{ peakLength.toFixed(0) }}</span>
+          <span class="stat-value text-gold">{{ peakLength.toFixed(0) }}</span>
         </span>
         <span class="chart-stat">
           <span class="stat-label">Curr Length</span>
@@ -217,6 +205,7 @@ export default defineComponent({
       smoothingWindow: 10,  // Smooth every N episodes for full history
       pendingRewards: [] as number[],  // Buffer for smoothing rewards
       pendingLengths: [] as number[],  // Buffer for smoothing lengths
+      movingAvgWindow: 50,  // Window size for moving average over interval data points
     }
   },
   computed: {
@@ -230,16 +219,6 @@ export default defineComponent({
       if (this.stepsPerSecond > 50) return 'text-primary'
       return 'text-muted'
     },
-    peakReward(): number {
-      if (this.fullRewardHistory.length === 0) return 0
-      return Math.max(...this.fullRewardHistory)
-    },
-    currentSmoothedReward(): number {
-      if (this.fullRewardHistory.length === 0) return 0
-      // Average of last 10 points
-      const recent = this.fullRewardHistory.slice(-10)
-      return recent.reduce((a, b) => a + b, 0) / recent.length
-    },
     peakLength(): number {
       if (this.fullLengthHistory.length === 0) return 0
       return Math.max(...this.fullLengthHistory)
@@ -249,11 +228,6 @@ export default defineComponent({
       // Average of last 10 points
       const recent = this.fullLengthHistory.slice(-10)
       return recent.reduce((a, b) => a + b, 0) / recent.length
-    },
-    currentRewardTrendClass(): string {
-      if (this.currentSmoothedReward > 0) return 'text-success'
-      if (this.currentSmoothedReward < -0.3) return 'text-danger'
-      return 'text-muted'
     },
     currentLengthTrendClass(): string {
       // Length trend - higher is better
@@ -288,26 +262,32 @@ export default defineComponent({
       
       // Only add to history when episode changes
       if (newVal !== oldVal && newVal > 0) {
-        // Store episode reward for immediate feedback
-        this.episodeRewardHistory.push(this.episodeReward)
+        // Store interval average reward (average of episodes in last ~500ms)
+        this.episodeRewardHistory.push(this.avgReward)
         if (this.episodeRewardHistory.length > this.maxHistoryLength) {
           this.episodeRewardHistory.shift()
         }
         
-        // Store average reward for trend
-        this.avgRewardHistory.push(this.avgReward)
+        // Calculate MA(50) from interval averages
+        const rewardWindow = Math.min(this.movingAvgWindow, this.episodeRewardHistory.length)
+        const recentRewards = this.episodeRewardHistory.slice(-rewardWindow)
+        const movingAvgReward = recentRewards.reduce((a, b) => a + b, 0) / recentRewards.length
+        this.avgRewardHistory.push(movingAvgReward)
         if (this.avgRewardHistory.length > this.maxHistoryLength) {
           this.avgRewardHistory.shift()
         }
 
-        // Store episode length
-        this.episodeLengthHistory.push(this.episodeLength)
+        // Store interval average length (average of episodes in last ~500ms)
+        this.episodeLengthHistory.push(this.avgLength)
         if (this.episodeLengthHistory.length > this.maxHistoryLength) {
           this.episodeLengthHistory.shift()
         }
 
-        // Store average length
-        this.avgLengthHistory.push(this.avgLength)
+        // Calculate MA(50) from interval averages
+        const lengthWindow = Math.min(this.movingAvgWindow, this.episodeLengthHistory.length)
+        const recentLengths = this.episodeLengthHistory.slice(-lengthWindow)
+        const movingAvgLength = recentLengths.reduce((a, b) => a + b, 0) / recentLengths.length
+        this.avgLengthHistory.push(movingAvgLength)
         if (this.avgLengthHistory.length > this.maxHistoryLength) {
           this.avgLengthHistory.shift()
         }
@@ -353,6 +333,11 @@ export default defineComponent({
       if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
       return n.toString()
     },
+    formatAxisLabel(v: number): string {
+      if (Math.abs(v) >= 100) return v.toFixed(0)
+      if (Math.abs(v) >= 10) return v.toFixed(1)
+      return v.toFixed(2)
+    },
     drawCharts() {
       // Draw combined reward chart (cyan for raw, green for moving avg)
       this.drawDualLineChart(
@@ -372,13 +357,12 @@ export default defineComponent({
         { r: 170, g: 100, b: 255 } // purple for moving avg
       )
 
-      // Draw full history chart (gold for reward, teal for length) - dual axis
-      this.drawDualAxisChart(
+      // Draw full history chart (gold for avg length only)
+      this.drawChartOnCanvas(
         this.$refs.fullHistoryCanvas as HTMLCanvasElement,
-        this.fullRewardHistory,
         this.fullLengthHistory,
-        { r: 255, g: 183, b: 77 },  // gold for reward
-        { r: 0, g: 200, b: 180 }    // teal for length
+        { r: 255, g: 183, b: 77 }, // gold
+        true // larger chart
       )
     },
     
@@ -440,15 +424,9 @@ export default defineComponent({
       ctx.textBaseline = 'middle'
       
       // Draw max, mid, min labels
-      const formatAxisLabel = (v: number) => {
-        if (Math.abs(v) >= 100) return v.toFixed(0)
-        if (Math.abs(v) >= 10) return v.toFixed(1)
-        return v.toFixed(2)
-      }
-      
-      ctx.fillText(formatAxisLabel(max), yAxisWidth - 4, 8)
-      ctx.fillText(formatAxisLabel((max + min) / 2), yAxisWidth - 4, height / 2)
-      ctx.fillText(formatAxisLabel(min), yAxisWidth - 4, height - 8)
+      ctx.fillText(this.formatAxisLabel(max), yAxisWidth - 4, 8)
+      ctx.fillText(this.formatAxisLabel((max + min) / 2), yAxisWidth - 4, height / 2)
+      ctx.fillText(this.formatAxisLabel(min), yAxisWidth - 4, height - 8)
 
       // Draw horizontal grid lines
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
@@ -582,30 +560,23 @@ export default defineComponent({
       const lengthMax = Math.max(...lengthValues) * 1.1 + 10
       const lengthRange = lengthMax - lengthMin || 1
 
-      // Format axis label
-      const formatAxisLabel = (v: number) => {
-        if (Math.abs(v) >= 100) return v.toFixed(0)
-        if (Math.abs(v) >= 10) return v.toFixed(1)
-        return v.toFixed(2)
-      }
-
       // Draw left Y axis labels (reward - gold)
       const { r: rReward, g: gReward, b: bReward } = rewardColor
       ctx.font = '10px var(--font-display)'
       ctx.fillStyle = `rgba(${rReward}, ${gReward}, ${bReward}, 0.8)`
       ctx.textAlign = 'right'
       ctx.textBaseline = 'middle'
-      ctx.fillText(formatAxisLabel(rewardMax), leftAxisWidth - 4, 8)
-      ctx.fillText(formatAxisLabel((rewardMax + rewardMin) / 2), leftAxisWidth - 4, height / 2)
-      ctx.fillText(formatAxisLabel(rewardMin), leftAxisWidth - 4, height - 8)
+      ctx.fillText(this.formatAxisLabel(rewardMax), leftAxisWidth - 4, 8)
+      ctx.fillText(this.formatAxisLabel((rewardMax + rewardMin) / 2), leftAxisWidth - 4, height / 2)
+      ctx.fillText(this.formatAxisLabel(rewardMin), leftAxisWidth - 4, height - 8)
 
       // Draw right Y axis labels (length - teal)
       const { r: rLength, g: gLength, b: bLength } = lengthColor
       ctx.fillStyle = `rgba(${rLength}, ${gLength}, ${bLength}, 0.8)`
       ctx.textAlign = 'left'
-      ctx.fillText(formatAxisLabel(lengthMax), totalWidth - rightAxisWidth + 4, 8)
-      ctx.fillText(formatAxisLabel((lengthMax + lengthMin) / 2), totalWidth - rightAxisWidth + 4, height / 2)
-      ctx.fillText(formatAxisLabel(lengthMin), totalWidth - rightAxisWidth + 4, height - 8)
+      ctx.fillText(this.formatAxisLabel(lengthMax), totalWidth - rightAxisWidth + 4, 8)
+      ctx.fillText(this.formatAxisLabel((lengthMax + lengthMin) / 2), totalWidth - rightAxisWidth + 4, height / 2)
+      ctx.fillText(this.formatAxisLabel(lengthMin), totalWidth - rightAxisWidth + 4, height - 8)
 
       // Draw horizontal grid lines
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'
@@ -746,15 +717,9 @@ export default defineComponent({
       ctx.textBaseline = 'middle'
       
       // Draw max, mid, min labels
-      const formatAxisLabel = (v: number) => {
-        if (Math.abs(v) >= 100) return v.toFixed(0)
-        if (Math.abs(v) >= 10) return v.toFixed(1)
-        return v.toFixed(2)
-      }
-      
-      ctx.fillText(formatAxisLabel(max), yAxisWidth - 4, 8)
-      ctx.fillText(formatAxisLabel((max + min) / 2), yAxisWidth - 4, height / 2)
-      ctx.fillText(formatAxisLabel(min), yAxisWidth - 4, height - 8)
+      ctx.fillText(this.formatAxisLabel(max), yAxisWidth - 4, 8)
+      ctx.fillText(this.formatAxisLabel((max + min) / 2), yAxisWidth - 4, height / 2)
+      ctx.fillText(this.formatAxisLabel(min), yAxisWidth - 4, height - 8)
 
       // Draw horizontal grid lines
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'

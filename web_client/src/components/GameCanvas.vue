@@ -224,6 +224,7 @@ export default defineComponent({
           this.$emit('episode-end', {
             score: stepResult.result.info.score,
             reward: stepResult.finalReward,  // Use the captured final reward
+            length: stepResult.finalLength,  // Include episode length for charting
           })
           this.lastScore = 0
         }

@@ -361,10 +361,13 @@ export default defineComponent({
         this.bestScore = newScore
       }
     },
-    handleEpisodeEnd(stats: { score: number; reward: number }) {
+    handleEpisodeEnd(stats: { score: number; reward: number; length?: number }) {
       this.lastGameScore = stats.score
-      // Store the final episode reward (for charting)
+      // Store the final episode reward and length (for charting)
       this.episodeReward = stats.reward
+      if (stats.length !== undefined) {
+        this.episodeLength = stats.length
+      }
       
       // In manual mode, show game over screen
       if (this.mode === 'manual') {

@@ -213,8 +213,9 @@ export class WorkerDQNAgent {
     this.lastQValues = this.inferenceNetwork.predict(state)
 
     // Epsilon-greedy exploration
+    // Use 20% flap probability (not 50%) because flapping has momentum
     if (training && Math.random() < this.epsilon) {
-      return Math.floor(Math.random() * this.config.actionDim)
+      return Math.random() < 0.2 ? 1 : 0  // 20% flap, 80% no-flap
     }
 
     // Greedy action

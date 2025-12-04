@@ -5,15 +5,10 @@
 
 import { GameEngine, type RewardConfig, type StepResult } from '@/game'
 import { WorkerDQNAgent, type DQNConfig } from './WorkerDQNAgent'
-import type { TrainingMetrics } from './types'
+import type { TrainingMetrics, AutoEvalResult } from './types'
 
-export interface AutoEvalResult {
-  avgScore: number
-  maxScore: number
-  minScore: number
-  scores: number[]
-  episode: number
-}
+// Re-export for convenience
+export type { AutoEvalResult }
 
 export interface TrainingCallbacks {
   onStep?: (metrics: TrainingMetrics, qValues: number[]) => void
