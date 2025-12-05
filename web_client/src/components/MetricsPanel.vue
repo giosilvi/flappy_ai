@@ -190,6 +190,31 @@ export default defineComponent({
       type: Boolean,
       default: false,
     },
+    // GPU mode specific props
+    gpuMode: {
+      type: Boolean,
+      default: false,
+    },
+    recentRewardsFromWorker: {
+      type: Array as () => number[],
+      default: () => [],
+    },
+    recentAvgRewardsFromWorker: {
+      type: Array as () => number[],
+      default: () => [],
+    },
+    numBirds: {
+      type: Number,
+      default: 1,
+    },
+    gpuBackend: {
+      type: String,
+      default: 'cpu',
+    },
+    trainSteps: {
+      type: Number,
+      default: 0,
+    },
   },
   data() {
     return {
@@ -241,6 +266,16 @@ export default defineComponent({
       if (recentAvg < olderAvg * 0.9) return 'text-danger'
       return 'text-muted'
     },
+    gpuBackendLabel(): string {
+      if (this.gpuBackend === 'webgpu') return 'WebGPU'
+      if (this.gpuBackend === 'webgl') return 'WebGL'
+      return 'CPU'
+    },
+    gpuBackendClass(): string {
+      if (this.gpuBackend === 'webgpu') return 'backend-webgpu'
+      if (this.gpuBackend === 'webgl') return 'backend-webgl'
+      return 'backend-cpu'
+    },
   },
   watch: {
     episode(newVal: number, oldVal: number) {
@@ -260,7 +295,12 @@ export default defineComponent({
         return
       }
       
-      // Only add to history when episode changes
+      // In GPU mode, we use worker-provided histories instead
+      if (this.gpuMode) {
+        return  // Let the worker history watchers handle it
+      }
+      
+      // CPU mode: Only add to history when episode changes
       if (newVal !== oldVal && newVal > 0) {
         // Store interval average reward (average of episodes in last ~500ms)
         this.episodeRewardHistory.push(this.avgReward)
@@ -311,6 +351,53 @@ export default defineComponent({
           }
         }
         
+        this.$nextTick(() => this.drawCharts())
+      }
+    },
+    // Watch GPU mode reward histories from worker
+    recentRewardsFromWorker: {
+      handler(newVal: number[]) {
+        if (!this.gpuMode || !newVal || newVal.length === 0) return
+        
+        // Replace local history with worker's history
+        this.episodeRewardHistory = [...newVal]
+        
+        // Update full history for trend (using smoothing)
+        if (newVal.length > 0) {
+          // Take every N points to smooth
+          const smoothStep = Math.max(1, Math.floor(newVal.length / 50))
+          const smoothed: number[] = []
+          for (let i = 0; i < newVal.length; i += smoothStep) {
+            const chunk = newVal.slice(i, Math.min(i + smoothStep, newVal.length))
+            const avg = chunk.reduce((a, b) => a + b, 0) / chunk.length
+            smoothed.push(avg)
+          }
+          this.fullHistory = smoothed
+        }
+        
+        this.$nextTick(() => this.drawCharts())
+      },
+      deep: true,
+    },
+    recentAvgRewardsFromWorker: {
+      handler(newVal: number[]) {
+        if (!this.gpuMode || !newVal || newVal.length === 0) return
+        
+        // Replace local history with worker's history
+        this.avgRewardHistory = [...newVal]
+        this.$nextTick(() => this.drawCharts())
+      },
+      deep: true,
+    },
+    // Reset histories when switching GPU mode
+    gpuMode(newVal: boolean, oldVal: boolean) {
+      if (newVal !== oldVal) {
+        this.episodeRewardHistory = []
+        this.avgRewardHistory = []
+        this.fullHistory = []
+        this.fullHistoryEpisodeCount = 0
+        this.pendingRewards = []
+        this.smoothingWindow = 10
         this.$nextTick(() => this.drawCharts())
       }
     },

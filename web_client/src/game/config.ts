@@ -66,7 +66,7 @@ export interface RewardConfig {
   deathPenalty: number
   flapCost: number
   centerReward: number
-  // Note: outOfBoundsCost is hardcoded internally (0.1 penalty for y < 0)
+  outOfBoundsPenalty: number  // Penalty for going above/below visible viewport
 }
 
 export const DefaultRewardConfig: RewardConfig = {
@@ -75,6 +75,7 @@ export const DefaultRewardConfig: RewardConfig = {
   deathPenalty: -1.0,
   flapCost: 0.003,         // Match Python default
   centerReward: 0.01,      // Shaping: small reward for moving toward gap center
+  outOfBoundsPenalty: -0.2, // Penalty for being outside visible viewport (y < 0 or y > viewport height - margin)
 }
 
 /**
