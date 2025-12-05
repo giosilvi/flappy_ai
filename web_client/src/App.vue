@@ -114,6 +114,7 @@
           @auto-eval-result="handleAutoEvalResult"
           @architecture-loaded="handleArchitectureLoaded"
           @backend-ready="handleBackendReady"
+          @eval-instances-set="handleEvalInstancesSet"
         />
         <div v-if="mode === 'idle'" class="game-overlay">
           <div class="overlay-content idle-content">
@@ -371,13 +372,17 @@ export default defineComponent({
       this.showGameOver = false
       this.isPaused = false
     },
-    startTrainingWithConfig(hiddenLayers: number[]) {
+    async startTrainingWithConfig(hiddenLayers: number[]) {
       this.hiddenLayersConfig = hiddenLayers
       this.mode = 'training'
       this.hasModel = true
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
-        gameCanvas.startTraining(hiddenLayers)
+        try {
+          await gameCanvas.startTraining(hiddenLayers)
+        } catch (error) {
+          console.error('[App] Failed to start training with config:', error)
+        }
       }
     },
     handleScoreUpdate(newScore: number) {
@@ -632,7 +637,7 @@ export default defineComponent({
     togglePause() {
       this.updatePaused(!this.isPaused)
     },
-    changeMode(newMode: GameMode) {
+    async changeMode(newMode: GameMode) {
       if (newMode === this.mode) return
       
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
@@ -654,7 +659,11 @@ export default defineComponent({
         if (gameCanvas) {
           // Note: startEval() sets epsilon=0 internally after initialization completes
           // to avoid race condition where setEpsilon fires before unifiedDQN is ready
-          gameCanvas.startEval()
+          try {
+            await gameCanvas.startEval()
+          } catch (error) {
+            console.error('[App] Failed to start eval:', error)
+          }
         }
       } else if (newMode === 'training') {
         this.mode = 'training'
@@ -666,7 +675,11 @@ export default defineComponent({
           gameCanvas?.setEpsilon(this.savedEpsilonBeforeEval)
         }
         if (gameCanvas) {
-          gameCanvas.startTraining()
+          try {
+            await gameCanvas.startTraining()
+          } catch (error) {
+            console.error('[App] Failed to start training:', error)
+          }
         }
       } else if (newMode === 'manual') {
         this.mode = 'manual'
@@ -705,7 +718,7 @@ export default defineComponent({
       this.hasModel = false
       this.mode = 'configuring'
     },
-    restartGame() {
+    async restartGame() {
       this.showGameOver = false
       this.score = 0
       
@@ -713,7 +726,13 @@ export default defineComponent({
       if (this.mode === 'manual') {
         if (gameCanvas) gameCanvas.startGame()
       } else {
-        if (gameCanvas) gameCanvas.startTraining()
+        if (gameCanvas) {
+          try {
+            await gameCanvas.startTraining()
+          } catch (error) {
+            console.error('[App] Failed to restart training:', error)
+          }
+        }
       }
     },
     backToMenu() {
@@ -726,16 +745,20 @@ export default defineComponent({
         gameCanvas.stopGame()
       }
     },
-    backToTraining() {
+    async backToTraining() {
       this.showGameOver = false
       this.mode = 'training'
       this.isPaused = false
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
-        gameCanvas.startTraining()
+        try {
+          await gameCanvas.startTraining()
+        } catch (error) {
+          console.error('[App] Failed to start training (backToTraining):', error)
+        }
       }
     },
-    restartEval() {
+    async restartEval() {
       // Clear eval stats and restart evaluation
       this.evalStats = null
       this.evalScores = []
@@ -745,7 +768,11 @@ export default defineComponent({
       this.evalTargetInstances = Math.min(this.numInstances, maxEvalInstances)
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
-        gameCanvas.startEval()
+        try {
+          await gameCanvas.startEval()
+        } catch (error) {
+          console.error('[App] Failed to restart eval:', error)
+        }
       }
     },
     recordEvalScore(score: number) {
@@ -768,6 +795,10 @@ export default defineComponent({
       if (scores.length >= this.evalTargetInstances) {
         this.evalComplete = true
       }
+    },
+    handleEvalInstancesSet(count: number) {
+      // Sync evalTargetInstances to the actual count used by GameCanvas/worker
+      this.evalTargetInstances = count
     },
     async handleScoreSubmitted(result: { entry: { name: string; score: number }; isNewChampion: boolean }) {
       this.lastSubmittedBestScore = this.bestScore

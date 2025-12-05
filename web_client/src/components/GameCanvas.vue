@@ -92,6 +92,7 @@ export default defineComponent({
     'auto-eval-result', 
     'architecture-loaded',
     'backend-ready',
+    'eval-instances-set',
   ],
   data() {
     return {
@@ -121,6 +122,7 @@ export default defineComponent({
       isMobile: false,
       backend: 'cpu' as BackendType,
       lastInitHiddenLayers: null as number[] | null,
+      pendingNumInstances: null as number | null,
     }
   },
   computed: {
@@ -256,8 +258,12 @@ export default defineComponent({
       })
 
       // If numInstances changed during async init, apply the latest value now
-      if (this.unifiedDQN && this.numInstances !== initNumInstances) {
-        this.updateInstanceCount(this.numInstances)
+      if (this.unifiedDQN) {
+        const desiredCount = this.pendingNumInstances ?? this.numInstances
+        if (desiredCount !== initNumInstances) {
+          this.updateInstanceCount(desiredCount)
+        }
+        this.pendingNumInstances = null
       }
       } finally {
         this.isInitializing = false
@@ -270,6 +276,9 @@ export default defineComponent({
         this.unifiedDQN.setNumInstances(count as 1 | 4 | 16 | 64 | 256 | 1024)
         this.unifiedDQN.setVisualization(count <= MAX_VISUALIZED_INSTANCES)
         this.unifiedDQN.setFrameLimit(this.frameLimit30)
+      } else {
+        // Defer applying until init completes
+        this.pendingNumInstances = count
       }
       
       if (this.tiledRenderer) {
@@ -455,6 +464,10 @@ export default defineComponent({
       // This matches App.vue's evalTargetInstances clamping
       const maxEvalInstances = 64
       const clampedInstances = Math.min(this.numInstances, maxEvalInstances)
+
+      // Notify parent of the actual eval instance count being used
+      this.$emit('eval-instances-set', clampedInstances)
+
       this.unifiedDQN?.startManualEval(clampedInstances)
     },
 
