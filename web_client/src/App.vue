@@ -603,11 +603,15 @@ export default defineComponent({
       if (!file) return
 
       const reader = new FileReader()
-      reader.onload = () => {
+      reader.onload = async () => {
         const text = typeof reader.result === 'string' ? reader.result : ''
         const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
         if (text && gameCanvas && (gameCanvas as any).loadCheckpointFromJSON) {
-          (gameCanvas as any).loadCheckpointFromJSON(text)
+          try {
+            await (gameCanvas as any).loadCheckpointFromJSON(text)
+          } catch (error) {
+            console.error('[App] Failed to load checkpoint from JSON:', error)
+          }
         }
       }
       reader.readAsText(file)
@@ -653,14 +657,13 @@ export default defineComponent({
         this.evalStats = null
         this.evalScores = []
         this.evalComplete = false
-        // Clamp eval instances to max 64 (matches UnifiedDQN.startManualEval limit)
-        const maxEvalInstances = 64
-        this.evalTargetInstances = Math.min(this.numInstances, maxEvalInstances)
         if (gameCanvas) {
           // Note: startEval() sets epsilon=0 internally after initialization completes
           // to avoid race condition where setEpsilon fires before unifiedDQN is ready
           try {
-            await gameCanvas.startEval()
+            const usedInstances = await gameCanvas.startEval()
+            // Lock to the instance count actually used by the worker
+            this.evalTargetInstances = usedInstances
           } catch (error) {
             console.error('[App] Failed to start eval:', error)
           }
@@ -763,13 +766,12 @@ export default defineComponent({
       this.evalStats = null
       this.evalScores = []
       this.evalComplete = false
-      // Clamp eval instances to max 64 (matches UnifiedDQN.startManualEval limit)
-      const maxEvalInstances = 64
-      this.evalTargetInstances = Math.min(this.numInstances, maxEvalInstances)
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
         try {
-          await gameCanvas.startEval()
+          const usedInstances = await gameCanvas.startEval()
+          // Lock to the instance count actually used by the worker
+          this.evalTargetInstances = usedInstances
         } catch (error) {
           console.error('[App] Failed to restart eval:', error)
         }

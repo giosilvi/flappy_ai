@@ -435,7 +435,7 @@ export default defineComponent({
     },
 
     // ===== Eval Mode =====
-    async startEval() {
+    async startEval(): Promise<number> {
       if (!this.unifiedDQN) {
         await this.initUnifiedDQN()
       }
@@ -469,6 +469,9 @@ export default defineComponent({
       this.$emit('eval-instances-set', clampedInstances)
 
       this.unifiedDQN?.startManualEval(clampedInstances)
+
+      // Return the actual instance count used so the parent can lock expectations
+      return clampedInstances
     },
 
     startAutoEval() {
@@ -492,6 +495,8 @@ export default defineComponent({
           // Clamp eval instances to max 64 to match App.vue's evalTargetInstances clamping
           const maxEvalInstances = 64
           const clampedInstances = Math.min(this.numInstances, maxEvalInstances)
+          // Notify parent of the actual eval instance count when resuming
+          this.$emit('eval-instances-set', clampedInstances)
           this.unifiedDQN.startManualEval(clampedInstances)
         }
       }

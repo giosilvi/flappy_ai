@@ -122,6 +122,19 @@ export class VectorizedEnv {
     const completedEpisodes: EpisodeStats[] = []
 
     for (let i = 0; i < this.numEnvs; i++) {
+      // In manual eval (autoReset === false), skip stepping envs that already finished.
+      // Otherwise they would emit duplicate episode completions every loop.
+      if (!autoReset && this.engines[i].getState().done) {
+        const observation = this.engines[i].getObservation()
+        const info = this.engines[i].getInfo()
+        observations.push(observation)
+        rewards.push(0)
+        dones.push(true)
+        scores.push(info.score)
+        infos.push(info)
+        continue
+      }
+
       const result = this.engines[i].step(actions[i] as 0 | 1)
 
       // Track last step reward for visualization
