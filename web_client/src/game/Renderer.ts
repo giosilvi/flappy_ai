@@ -32,7 +32,7 @@ export class Renderer {
     }
     this.ctx = ctx
 
-    // Set canvas size
+    // Set canvas to native game resolution - CSS handles display scaling
     this.canvas.width = GameConfig.WIDTH
     this.canvas.height = GameConfig.HEIGHT
 

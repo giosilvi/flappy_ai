@@ -8,13 +8,14 @@
       <span class="touch-text">Tap to flap!</span>
     </div>
     
-    <!-- Fast mode overlay - game not rendered -->
-    <div v-if="mode === 'training' && fastMode" class="fast-mode-overlay">
+    <!-- High instance count overlay - no visualization -->
+    <div v-if="shouldShowNoVizOverlay" class="fast-mode-overlay">
       <div class="fast-mode-content">
         <div class="fast-header">
           <div class="fast-icon">⚡</div>
-          <div class="fast-title">FAST TRAINING</div>
-          <div class="fast-subtitle">Game visualization disabled</div>
+          <div class="fast-title">PARALLEL TRAINING</div>
+          <div class="fast-subtitle">{{ numInstances }} instances running</div>
+          <div class="fast-backend">Backend: {{ backend }}</div>
         </div>
         <img src="/dqn-workflow.jpg" alt="DQN Workflow" class="dqn-workflow-img" />
       </div>
@@ -24,72 +25,121 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
+import type { PropType } from 'vue'
 import {
   GameEngine,
   Renderer,
+  TiledRenderer,
   InputController,
   GameConfig,
+  MAX_VISUALIZED_INSTANCES,
   type GameAction,
   type RawGameState,
 } from '@/game'
-import { TrainingLoop } from '@/rl'
+import { 
+  UnifiedDQN, 
+  type BackendType,
+} from '@/rl'
 
 export default defineComponent({
   name: 'GameCanvas',
   props: {
     mode: {
-      type: String as () => 'idle' | 'configuring' | 'training' | 'eval' | 'manual',
+      type: String as PropType<'idle' | 'configuring' | 'training' | 'eval' | 'manual'>,
       default: 'idle',
     },
-    fastMode: {
-      type: Boolean,
-      default: false,
+    numInstances: {
+      type: Number,
+      default: 1,
     },
     isPaused: {
       type: Boolean,
       default: false,
     },
     hiddenLayersConfig: {
-      type: Array as () => number[],
+      type: Array as PropType<number[]>,
       default: () => [64, 64],
     },
+    frameLimit30: {
+      type: Boolean,
+      default: false,
+    },
+    // Training settings (synced to worker on init)
+    epsilon: {
+      type: Number,
+      default: 0.5,
+    },
+    learningRate: {
+      type: Number,
+      default: 0.0005,
+    },
+    autoDecay: {
+      type: Boolean,
+      default: true,
+    },
+    epsilonDecaySteps: {
+      type: Number,
+      default: 200000,
+    },
   },
-  emits: ['score-update', 'episode-end', 'state-update', 'metrics-update', 'network-update', 'weight-health-update', 'auto-eval-result', 'architecture-loaded'],
+  emits: [
+    'score-update', 
+    'episode-end', 
+    'state-update', 
+    'metrics-update', 
+    'network-update', 
+    'weight-health-update', 
+    'auto-eval-result', 
+    'architecture-loaded',
+    'backend-ready',
+  ],
   data() {
     return {
+      // Renderers
+      singleRenderer: null as Renderer | null,
+      tiledRenderer: null as TiledRenderer | null,
+      
+      // Game state
       engine: null as GameEngine | null,
-      renderer: null as Renderer | null,
       inputController: null as InputController | null,
-      trainingLoop: null as TrainingLoop | null,
+      unifiedDQN: null as UnifiedDQN | null,
+      isInitializing: false,  // Lock to prevent concurrent initUnifiedDQN calls
+      
+      // Animation
       animationId: null as number | null,
-      trainingTimeoutId: null as number | null,
       isRunning: false,
       internalPaused: false,
       gameOver: false,
+      
+      // Input
       pendingAction: 0 as GameAction,
       lastFrameTime: 0,
       lastScore: 0,
-      lastMetricsTime: 0,
+      
+      // UI state
       showTouchHint: true,
       isMobile: false,
-      // For eval-mode visualization: last observation/Q-values/action actually used
-      lastEvalObservation: [] as number[],
-      lastEvalQValues: [0, 0] as [number, number],
-      lastEvalAction: 0 as 0 | 1,
-      // For reward display during training
-      lastReward: 0 as number,
+      backend: 'cpu' as BackendType,
+      lastInitHiddenLayers: null as number[] | null,
     }
   },
   computed: {
-    // computed properties
+    shouldShowNoVizOverlay(): boolean {
+      return this.mode === 'training' && this.numInstances > MAX_VISUALIZED_INSTANCES
+    },
+    canVisualize(): boolean {
+      return this.numInstances <= MAX_VISUALIZED_INSTANCES
+    },
   },
   watch: {
     isPaused(newVal: boolean) {
       this.setPaused(newVal)
     },
+    numInstances(newVal: number) {
+      this.updateInstanceCount(newVal)
+    },
   },
   async mounted() {
-    // Detect mobile device
     this.isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0
     await this.initGame()
   },
@@ -98,8 +148,8 @@ export default defineComponent({
     if (this.inputController) {
       this.inputController.disable()
     }
-    if (this.trainingLoop) {
-      this.trainingLoop.dispose()
+    if (this.unifiedDQN) {
+      this.unifiedDQN.dispose()
     }
   },
   methods: {
@@ -107,11 +157,20 @@ export default defineComponent({
       const canvas = this.$refs.canvas as HTMLCanvasElement
       if (!canvas) return
 
-      // Initialize renderer
-      this.renderer = new Renderer(canvas)
-      await this.renderer.loadSprites()
+      // Use native game resolution - CSS handles display scaling
+      canvas.width = GameConfig.WIDTH   // 288
+      canvas.height = GameConfig.HEIGHT // 512
 
-      // Initialize game engine
+      // Initialize single-game renderer (for manual mode and idle)
+      this.singleRenderer = new Renderer(canvas)
+      await this.singleRenderer.loadSprites()
+
+      // Initialize tiled renderer (for parallel training/eval)
+      // Use native dimensions - it will scale internally for tiles
+      this.tiledRenderer = new TiledRenderer(canvas, GameConfig.WIDTH, GameConfig.HEIGHT)
+      await this.tiledRenderer.loadSprites()
+
+      // Initialize game engine (for manual mode)
       this.engine = new GameEngine()
 
       // Initialize input controller
@@ -122,161 +181,161 @@ export default defineComponent({
       this.renderFrame()
     },
 
-    startGame() {
-      if (!this.engine || !this.renderer) return
+    async initUnifiedDQN(hiddenLayersOverride?: number[]) {
+      // Prevent concurrent initialization calls (race condition guard)
+      if (this.isInitializing) {
+        console.log('[GameCanvas] initUnifiedDQN already in progress, waiting...')
+        // Wait for current initialization to complete
+        while (this.isInitializing) {
+          await new Promise(resolve => setTimeout(resolve, 50))
+        }
 
-      // Stop fast training if it was active (worker runs independently)
-      if (this.trainingLoop) {
-        this.trainingLoop.setFastMode(false)
+        // If an instance now exists with the same architecture, skip redundant re-init
+        const desiredLayers = hiddenLayersOverride ? hiddenLayersOverride : this.hiddenLayersConfig
+        if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers)) {
+          return
+        }
+        // Otherwise proceed to re-init with the new desired architecture
+      }
+      
+      this.isInitializing = true
+      
+      try {
+        if (this.unifiedDQN) {
+          this.unifiedDQN.dispose()
+          this.unifiedDQN = null
+        }
+
+        const hiddenLayers = hiddenLayersOverride ? [...hiddenLayersOverride] : [...this.hiddenLayersConfig]
+        this.lastInitHiddenLayers = [...hiddenLayers]
+
+        // Capture the current instance count at init start
+        const initNumInstances = this.numInstances
+
+        this.unifiedDQN = new UnifiedDQN({
+          agentConfig: {
+            hiddenLayers,
+            epsilonStart: this.epsilon,
+            epsilonDecaySteps: this.epsilonDecaySteps,
+            learningRate: this.learningRate,
+          },
+          numInstances: initNumInstances,
+          backend: 'auto',
+          visualize: this.canVisualize,
+          frameLimit30: this.frameLimit30,
+        })
+
+        await this.unifiedDQN.init({
+        onReady: (backend) => {
+          this.backend = backend
+          this.$emit('backend-ready', backend)
+          console.log('[GameCanvas] UnifiedDQN ready with backend:', backend)
+        },
+        onMetrics: (metrics) => {
+          this.$emit('metrics-update', metrics)
+        },
+        onGameStates: (states, rewards, cumulativeRewards) => {
+          this.renderTiledStates(states, rewards, cumulativeRewards)
+        },
+        onAutoEvalResult: (result) => {
+          this.$emit('auto-eval-result', result)
+        },
+        onWeightHealth: (health) => {
+          this.$emit('weight-health-update', health)
+        },
+        onEpisodeEnd: (stats) => {
+          this.$emit('episode-end', {
+            score: stats.score,
+            reward: stats.reward,
+            length: stats.length,
+          })
+        },
+        onError: (msg) => {
+          console.error('[GameCanvas] UnifiedDQN error:', msg)
+        },
+      })
+
+      // If numInstances changed during async init, apply the latest value now
+      if (this.unifiedDQN && this.numInstances !== initNumInstances) {
+        this.updateInstanceCount(this.numInstances)
+      }
+      } finally {
+        this.isInitializing = false
+      }
+    },
+
+    updateInstanceCount(count: number) {
+      if (this.unifiedDQN) {
+        // Type assertion needed since count comes from prop
+        this.unifiedDQN.setNumInstances(count as 1 | 4 | 16 | 64 | 256 | 1024)
+        this.unifiedDQN.setVisualization(count <= MAX_VISUALIZED_INSTANCES)
+        this.unifiedDQN.setFrameLimit(this.frameLimit30)
+      }
+      
+      if (this.tiledRenderer) {
+        this.tiledRenderer.setInstanceCount(Math.min(count, MAX_VISUALIZED_INSTANCES))
+      }
+    },
+
+    renderTiledStates(states: RawGameState[], rewards?: number[], cumulativeRewards?: number[]) {
+      if (!this.tiledRenderer || !this.canVisualize) return
+      // Don't show rewards during eval mode - only during training
+      if (this.mode === 'eval') {
+        this.tiledRenderer.render(states)
+      } else {
+        this.tiledRenderer.render(states, rewards, cumulativeRewards)
+      }
+    },
+
+    // ===== Manual Mode =====
+    startGame() {
+      if (!this.engine || !this.singleRenderer) return
+
+      // Stop any training if active
+      if (this.unifiedDQN) {
+        this.unifiedDQN.stopTraining()
+        this.unifiedDQN.stopEval()
+      }
+
+      // Reset canvas to single-game dimensions
+      const canvas = this.$refs.canvas as HTMLCanvasElement
+      if (canvas) {
+        canvas.width = GameConfig.WIDTH
+        canvas.height = GameConfig.HEIGHT
       }
 
       this.engine.reset()
-      this.renderer.resetFloor()
+      this.singleRenderer.resetFloor()
       this.pendingAction = 0
       this.isRunning = true
       this.internalPaused = false
       this.gameOver = false
       this.lastScore = 0
 
-      // Enable input for manual/training play
+      // Enable input for manual play
       const container = this.$refs.container as HTMLElement
       this.inputController?.enable(container, this.handleInput)
 
       this.lastFrameTime = performance.now()
-      // Use $nextTick to ensure mode prop has updated before starting the loop
       this.$nextTick(() => this.gameLoop())
-    },
-
-    startTraining(hiddenLayers: number[] = [64, 64]) {
-      if (!this.engine || !this.renderer) return
-
-      // Initialize training loop if not already (or reinitialize if architecture changed)
-      if (!this.trainingLoop && this.engine) {
-        this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
-          inputDim: 6,
-          hiddenLayers,
-          actionDim: 2,
-        }, {
-          onStep: (metrics) => {
-            this.$emit('metrics-update', metrics)
-          },
-          onAutoEvalResult: (result) => {
-            this.$emit('auto-eval-result', result)
-          },
-          onWeightHealth: (health) => {
-            this.$emit('weight-health-update', health)
-          },
-        })
-      }
-
-      this.renderer.resetFloor()
-      this.isRunning = true
-      this.internalPaused = false
-      this.gameOver = false
-      this.lastScore = 0
-
-      // Start training (synchronous - pure JS neural network)
-      if (this.trainingLoop) {
-        this.trainingLoop.start()
-      }
-
-      this.lastFrameTime = performance.now()
-      this.lastMetricsTime = performance.now()
-      // Use $nextTick to ensure mode prop has updated before starting the loop
-      this.$nextTick(() => this.runTrainingLoop())
-    },
-
-    runTrainingLoop() {
-      // Guard: only run if we're in training mode (prevents race with other loops)
-      if (this.mode !== 'training') return
-      if (!this.isRunning || !this.trainingLoop || !this.renderer || !this.engine) return
-      
-      if (this.internalPaused) {
-        this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
-        return
-      }
-
-      const now = performance.now()
-      const elapsed = now - this.lastFrameTime
-
-      if (this.fastMode) {
-        this.trainingLoop.setFastMode(true)
-
-        // Periodically refresh metrics from the worker-driven loop
-        if (now - this.lastMetricsTime >= 500) {
-          const metrics = this.trainingLoop.getMetrics()
-          this.$emit('metrics-update', metrics)
-          
-          // Emit network visualization with REAL activations
-          const viz = this.trainingLoop.getNetworkVisualization()
-          this.$emit('network-update', viz)
-          
-          this.lastMetricsTime = now
-        }
-
-        this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
-        return
-      }
-
-      // Ensure worker fast mode is disabled when returning to normal speed
-      this.trainingLoop.setFastMode(false)
-
-      // Normal mode: run at game speed (30fps)
-      if (elapsed >= GameConfig.FRAME_TIME) {
-        this.lastFrameTime = now - (elapsed % GameConfig.FRAME_TIME)
-
-        const stepResult = this.trainingLoop.step()
-        
-        // Capture the reward for display
-        if (stepResult?.result) {
-          this.lastReward = stepResult.result.reward
-        }
-        
-        if (stepResult?.episodeEnded) {
-          this.$emit('episode-end', {
-            score: stepResult.result.info.score,
-            reward: stepResult.finalReward,  // Use the captured final reward
-            length: stepResult.finalLength,  // Include episode length for charting
-          })
-          this.lastScore = 0
-        }
-
-        // Render every frame in normal mode (with reward indicator)
-        const gameState = this.engine.getState()
-        const cumulativeReward = this.trainingLoop.getMetrics().episodeReward
-        this.renderer.render(gameState as RawGameState, false, this.lastReward, cumulativeReward)
-
-        // Emit network visualization immediately after step (in sync with action)
-        const viz = this.trainingLoop.getNetworkVisualization()
-        this.$emit('network-update', viz)
-      }
-
-      // Update metrics at game FPS
-      if (now - this.lastMetricsTime >= GameConfig.FRAME_TIME) {
-        const metrics = this.trainingLoop.getMetrics()
-        this.$emit('metrics-update', metrics)
-        this.lastMetricsTime = now
-      }
-
-      // Weight health is now emitted by the worker via onWeightHealth callback
-      // (normalized by training steps for consistency between normal and fast mode)
-
-      this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
     },
 
     stopGame() {
       this.isRunning = false
       this.internalPaused = false
       this.gameOver = false
+      
       if (this.animationId !== null) {
         cancelAnimationFrame(this.animationId)
         this.animationId = null
       }
-      if (this.trainingTimeoutId !== null) {
-        clearTimeout(this.trainingTimeoutId)
-        this.trainingTimeoutId = null
-      }
+      
       this.inputController?.disable()
+      
+      if (this.unifiedDQN) {
+        this.unifiedDQN.stopTraining()
+        this.unifiedDQN.stopEval()
+      }
     },
 
     handleInput(action: GameAction) {
@@ -284,47 +343,38 @@ export default defineComponent({
     },
 
     onTouchStart() {
-      // Hide touch hint after first touch
       this.showTouchHint = false
     },
 
     gameLoop() {
-      // Guard: only run if we're in manual mode (prevents race with other loops)
       if (this.mode !== 'manual') return
-      if (!this.isRunning || !this.engine || !this.renderer) return
+      if (!this.isRunning || !this.engine || !this.singleRenderer) return
 
       const now = performance.now()
       const elapsed = now - this.lastFrameTime
 
-      // Run at game FPS
       if (elapsed >= GameConfig.FRAME_TIME) {
         this.lastFrameTime = now - (elapsed % GameConfig.FRAME_TIME)
 
-        // Don't step if paused or game already over
         if (!this.internalPaused && !this.gameOver) {
-          // Step the game
           const action = this.pendingAction
-          this.pendingAction = 0 // Reset pending action
+          this.pendingAction = 0
 
           const result = this.engine.step(action)
 
-          // Emit score updates
           if (result.info.score > this.lastScore) {
             this.lastScore = result.info.score
             this.$emit('score-update', result.info.score)
           }
 
-          // Handle game over (only emit once)
           if (result.done && !this.gameOver) {
             this.gameOver = true
             this.$emit('episode-end', {
               score: result.info.score,
               reward: result.reward,
             })
-            // Manual mode: game stays over until user restarts
           }
 
-          // Emit state for NN visualization
           this.$emit('state-update', {
             observation: result.observation,
             state: this.engine.getState(),
@@ -332,328 +382,218 @@ export default defineComponent({
         }
       }
 
-      // Render
       this.renderFrame()
-
-      // Continue loop
       this.animationId = requestAnimationFrame(() => this.gameLoop())
     },
 
     renderFrame() {
-      if (!this.engine || !this.renderer) return
+      if (!this.engine || !this.singleRenderer) return
 
       const state = this.engine.getState()
       const showMessage = this.mode === 'idle' && !this.isRunning
 
-      this.renderer.render(state as RawGameState, showMessage)
+      this.singleRenderer.render(state as RawGameState, showMessage)
     },
 
-    /**
-     * External method to set agent action (for RL)
-     */
-    setAction(action: GameAction) {
-      this.pendingAction = action
+    // ===== Training Mode =====
+    async startTraining(_hiddenLayers?: number[]) {
+      if (!this.unifiedDQN) {
+        await this.initUnifiedDQN()
+      }
+
+      // Stop any running eval before starting training (clean mode transition)
+      this.unifiedDQN?.stopEval()
+
+      // Sync training settings to worker (in case they were changed before starting)
+      this.unifiedDQN?.setAutoDecay(this.autoDecay)
+      this.unifiedDQN?.setEpsilon(this.epsilon)
+      this.unifiedDQN?.setEpsilonDecaySteps(this.epsilonDecaySteps)
+      this.unifiedDQN?.setLearningRate(this.learningRate)
+
+      // Update tiled renderer for visualization
+      if (this.tiledRenderer && this.canVisualize) {
+        this.tiledRenderer.setInstanceCount(this.numInstances)
+      }
+
+      this.isRunning = true
+      this.internalPaused = false
+      this.gameOver = false
+
+      // Apply current frame limit setting before starting training
+      this.unifiedDQN?.setFrameLimit(this.frameLimit30)
+      
+      this.unifiedDQN?.startTraining()
     },
 
-    /**
-     * Get current observation (for RL)
-     */
-    getObservation(): number[] {
-      return this.engine?.getObservation() || []
+    // ===== Eval Mode =====
+    async startEval() {
+      if (!this.unifiedDQN) {
+        await this.initUnifiedDQN()
+      }
+
+      // Stop any running training AND eval before starting manual eval
+      // This ensures any ongoing auto-eval from training mode is stopped
+      this.unifiedDQN?.stopTraining()
+      this.unifiedDQN?.stopEval()
+
+      // Update tiled renderer for visualization
+      if (this.tiledRenderer && this.canVisualize) {
+        this.tiledRenderer.setInstanceCount(this.numInstances)
+      }
+
+      this.isRunning = true
+      this.internalPaused = false
+      this.gameOver = false
+      
+      // Apply current frame limit setting before starting eval
+      this.unifiedDQN?.setFrameLimit(this.frameLimit30)
+      
+      // Ensure epsilon is 0 for eval (set AFTER init completes to avoid race condition)
+      this.unifiedDQN?.setEpsilon(0)
+      
+      // Use manual eval with clamped instance count (max 64 for eval)
+      // This matches App.vue's evalTargetInstances clamping
+      const maxEvalInstances = 64
+      const clampedInstances = Math.min(this.numInstances, maxEvalInstances)
+      this.unifiedDQN?.startManualEval(clampedInstances)
     },
 
-    // ===== Training hyperparameter controls =====
+    startAutoEval() {
+      if (!this.unifiedDQN) return
+      this.unifiedDQN.startAutoEval()
+    },
+
+    // ===== Controls =====
+    setPaused(paused: boolean) {
+      this.internalPaused = paused
+      
+      if (paused) {
+        if (this.unifiedDQN) {
+          this.unifiedDQN.stopTraining()
+          this.unifiedDQN.stopEval()
+        }
+      } else {
+        if (this.mode === 'training' && this.unifiedDQN) {
+          this.unifiedDQN.startTraining()
+        } else if (this.mode === 'eval' && this.unifiedDQN) {
+          // Clamp eval instances to max 64 to match App.vue's evalTargetInstances clamping
+          const maxEvalInstances = 64
+          const clampedInstances = Math.min(this.numInstances, maxEvalInstances)
+          this.unifiedDQN.startManualEval(clampedInstances)
+        }
+      }
+    },
 
     setEpsilon(value: number) {
-      this.trainingLoop?.setEpsilon(value)
+      this.unifiedDQN?.setEpsilon(value)
     },
 
     setAutoDecay(enabled: boolean) {
-      this.trainingLoop?.setAutoDecay(enabled)
+      this.unifiedDQN?.setAutoDecay(enabled)
     },
 
     setEpsilonDecaySteps(steps: number) {
-      this.trainingLoop?.setEpsilonDecaySteps(steps)
+      this.unifiedDQN?.setEpsilonDecaySteps(steps)
     },
 
-    /**
-     * Download current network weights as a JSON checkpoint
-     */
-    saveCheckpointToFile() {
-      if (!this.trainingLoop) return
-      const agent = this.trainingLoop.getAgent()
-      if (!agent) return
+    setLearningRate(lr: number) {
+      this.unifiedDQN?.setLearningRate(lr)
+    },
 
-      const payload = {
-        type: 'flappy-ai-checkpoint-v2',
-        createdAt: new Date().toISOString(),
-        architecture: {
-          hiddenLayers: [...this.hiddenLayersConfig],
-        },
-        info: {
-          epsilon: agent.getEpsilon ? agent.getEpsilon() : undefined,
-          epsilonDecaySteps: this.trainingLoop.getEpsilonDecaySteps
-            ? this.trainingLoop.getEpsilonDecaySteps()
-            : undefined,
-        },
-        network: agent.save(),
+    setFrameLimit(enabled: boolean) {
+      this.unifiedDQN?.setFrameLimit(enabled)
+    },
+
+    setLRScheduler(enabled: boolean) {
+      this.unifiedDQN?.setLRScheduler(enabled)
+    },
+
+    setRewardConfig(config: Partial<{ passPipe: number; deathPenalty: number; stepPenalty: number; centerReward: number; flapCost: number }>) {
+      this.unifiedDQN?.setRewardConfig(config)
+    },
+
+    resetTraining() {
+      if (this.unifiedDQN) {
+        this.unifiedDQN.dispose()
+        this.unifiedDQN = null
       }
+      this.isRunning = false
+    },
 
-      const json = JSON.stringify(payload, null, 2)
+    // ===== Checkpoint I/O =====
+    async saveCheckpointToFile() {
+      if (!this.unifiedDQN) return
+
+      const json = await this.unifiedDQN.saveCheckpoint()
       const blob = new Blob([json], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
 
       const a = document.createElement('a')
       a.href = url
-      a.download = `flappy-ai-checkpoint-${new Date()
-        .toISOString()
-        .replace(/[:.]/g, '-')}.json`
+      a.download = `flappy-ai-checkpoint-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     },
 
-    /**
-     * Load network weights from a JSON string (uploaded file)
-     */
-    loadCheckpointFromJSON(json: string) {
-      let payload: any
+    async loadCheckpointFromJSON(json: string) {
+      // Parse checkpoint to get architecture info
+      let checkpoint: any
       try {
-        payload = JSON.parse(json)
+        checkpoint = JSON.parse(json)
       } catch (e) {
-        console.warn('[GameCanvas] Invalid checkpoint JSON', e)
+        console.error('[GameCanvas] Failed to parse checkpoint JSON:', e)
         return
       }
 
-      // Support both v1 and v2 checkpoint formats
-      const isV1 = payload?.type === 'flappy-ai-checkpoint-v1'
-      const isV2 = payload?.type === 'flappy-ai-checkpoint-v2'
-      if (!payload || (!isV1 && !isV2) || !payload.network) {
-        console.warn('[GameCanvas] Invalid checkpoint format')
-        return
-      }
+      // Extract hidden layers from checkpoint
+      const hiddenLayers = checkpoint.info?.hiddenLayers || checkpoint.architecture?.hiddenLayers || [64, 64]
 
-      // Extract architecture (default [64, 64] for v1 checkpoints)
-      const hiddenLayers = payload.architecture?.hiddenLayers || [64, 64]
-      
-      // Store the network data and info temporarily
-      const networkData = payload.network
-      const checkpointInfo = payload.info
-
-      // Dispose of existing training loop
-      if (this.trainingLoop) {
-        this.trainingLoop.dispose()
-        this.trainingLoop = null
-      }
-      if (this.animationId) {
-        cancelAnimationFrame(this.animationId)
-        this.animationId = null
-      }
-      this.isRunning = false
-
-      // Emit architecture-loaded so App.vue updates hiddenLayersConfig and enters configuring mode
+      // Emit architecture-loaded FIRST to update App.vue's hiddenLayersConfig
+      // This will also change mode to 'training' and set isPaused=true
       this.$emit('architecture-loaded', hiddenLayers)
 
-      // Create a new training loop with the loaded architecture
-      if (this.engine) {
-        this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
-          inputDim: 6,
-          hiddenLayers,
-          actionDim: 2,
-        }, {
-          onStep: (metrics) => {
-            this.$emit('metrics-update', metrics)
-          },
-          onAutoEvalResult: (result) => {
-            this.$emit('auto-eval-result', result)
-          },
-          onWeightHealth: (health) => {
-            this.$emit('weight-health-update', health)
-          },
-        })
+      // Wait a tick for the prop to update, then initialize with correct architecture
+      await this.$nextTick()
 
-        // Load the network weights
-        const agent = this.trainingLoop.getAgent()
-        if (agent) {
-          try {
-            agent.load(networkData)
-            
-            // Restore epsilon if present
-            if (checkpointInfo && typeof checkpointInfo.epsilon === 'number') {
-              this.trainingLoop.setEpsilon(checkpointInfo.epsilon)
-            }
-            
-            console.log('[GameCanvas] Checkpoint loaded with architecture:', hiddenLayers)
-          } catch (e) {
-            console.warn('[GameCanvas] Failed to load network weights', e)
-          }
-        }
-      }
-    },
+      // Always reinitialize unifiedDQN to match checkpoint architecture
+      // (existing instance may have different layer dimensions)
+      // Note: initUnifiedDQN() handles disposal of existing instance internally
+      // Pass hiddenLayers directly to avoid relying on parent prop update timing
+      await this.initUnifiedDQN(hiddenLayers)
 
-    setLearningRate(lr: number) {
-      this.trainingLoop?.setLearningRate(lr)
-    },
-
-    setLRScheduler(enabled: boolean) {
-      this.trainingLoop?.setLRScheduler(enabled)
-    },
-
-    setTrainFreq(value: number) {
-      this.trainingLoop?.setTrainFreq(value)
-    },
-
-    setRewardConfig(config: Partial<{ passPipe: number; deathPenalty: number; stepPenalty: number; centerReward: number; flapCost: number }>) {
-      this.trainingLoop?.setRewardConfig(config)
-    },
-
-    resetTraining() {
-      // Stop and dispose of the training loop
-      // User will need to click "Start Training" to begin again (with potentially new architecture)
-      if (this.trainingLoop) {
-        // Stop fast mode if active
-        if (this.fastMode) {
-          this.trainingLoop.setFastMode(false)
-        }
-        // Dispose of the training loop - it will be recreated with new config
-        this.trainingLoop.dispose()
-        this.trainingLoop = null
-      }
-      // Cancel animation loop
-      if (this.animationId) {
-        cancelAnimationFrame(this.animationId)
-        this.animationId = null
-      }
-      this.isRunning = false
-    },
-
-    setPaused(paused: boolean) {
-      if (paused) {
-        this.internalPaused = true
-        if (this.animationId !== null) {
-          cancelAnimationFrame(this.animationId)
-          this.animationId = null
-        }
-        if (this.trainingTimeoutId !== null) {
-          clearTimeout(this.trainingTimeoutId)
-          this.trainingTimeoutId = null
-        }
-        // Stop fast training in worker when pausing
-        if (this.fastMode && this.trainingLoop) {
-          this.trainingLoop.setFastMode(false)
-        }
-      } else {
-        this.internalPaused = false
-        if (this.isRunning) {
-          this.lastFrameTime = performance.now()
-          this.lastMetricsTime = performance.now()
-          // Resume fast training if it was active
-          if (this.fastMode && this.trainingLoop) {
-            this.trainingLoop.setFastMode(true)
-          }
-          if (this.trainingLoop) {
-            this.runTrainingLoop()
-          } else {
-            this.gameLoop()
-          }
-        }
-      }
-    },
-
-    startEval() {
-      if (!this.engine || !this.renderer) return
-
-      // Stop fast training if it was active (worker runs independently)
-      if (this.trainingLoop) {
-        this.trainingLoop.setFastMode(false)
-      }
-
-      // Initialize training loop if not already (we need the agent for eval)
-      if (!this.trainingLoop && this.engine) {
-        this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
-          inputDim: 6,
-          hiddenLayers: [64, 64],
-          actionDim: 2,
-        }, {
-          onStep: (metrics) => {
-            this.$emit('metrics-update', metrics)
-          },
-        })
-        this.trainingLoop.start()
-      }
-
-      this.engine.reset()
-      this.renderer.resetFloor()
-      this.isRunning = true
-      this.internalPaused = false
-      this.gameOver = false
-      this.lastScore = 0
-
-      this.lastFrameTime = performance.now()
-      this.lastMetricsTime = performance.now()
-      // Use $nextTick to ensure mode prop has updated before starting the loop
-      this.$nextTick(() => this.runEvalLoop())
-    },
-
-    runEvalLoop() {
-      // Guard: only run if we're in eval mode (prevents race with other loops)
-      if (this.mode !== 'eval') return
-      if (!this.isRunning || !this.trainingLoop || !this.renderer || !this.engine) return
-      if (this.internalPaused) {
-        this.animationId = requestAnimationFrame(() => this.runEvalLoop())
-        return
-      }
-
-      const now = performance.now()
-
-      // Throttle to ~30fps for eval (game speed)
-      if (now - this.lastFrameTime < 33) {
-        this.animationId = requestAnimationFrame(() => this.runEvalLoop())
-        return
-      }
-      this.lastFrameTime = now
-
-      // Run one game step
-      const agent = this.trainingLoop.getAgent()
+      // Load checkpoint into newly initialized agent
+      const agent = this.unifiedDQN
       if (agent) {
-        const observation = this.engine.getObservation()
-        const action = agent.act(observation, false) as 0 | 1
-
-        // Store for visualization (exact inputs/outputs used this step)
-        this.lastEvalObservation = observation
-        const qVals = agent.getLastQValues()
-        this.lastEvalQValues = [qVals[0] ?? 0, qVals[1] ?? 0]
-        this.lastEvalAction = action
-
-        const result = this.engine.step(action)
-
-        if (result.info.score > this.lastScore) {
-          this.lastScore = result.info.score
-          this.$emit('score-update', result.info.score)
-        }
-
-        // Emit network visualization for this step (before potential reset)
-        const viz = agent.getNetworkVisualization(observation)
-        this.$emit('network-update', viz)
-
-        if (result.done) {
-          this.$emit('episode-end', {
-            score: result.info.score,
-            reward: 0,
-          })
-          // Auto-restart eval
-          this.engine.reset()
-          this.renderer?.resetFloor()
-          this.lastScore = 0
+        const success = agent.loadCheckpoint(json)
+        if (success) {
+          console.log('[GameCanvas] Checkpoint loaded successfully')
         }
       }
 
-      // Render
-      const gameState = this.engine.getState()
-      this.renderer.render(gameState as RawGameState, false)
+      // Ensure agent respects the current pause state
+      // (isPaused was set to true before unifiedDQN existed, so the watcher had no effect)
+      if (this.isPaused && this.unifiedDQN) {
+        this.setPaused(true)
+      }
+    },
 
-      this.animationId = requestAnimationFrame(() => this.runEvalLoop())
+    // ===== External Accessors =====
+    setAction(action: GameAction) {
+      this.pendingAction = action
+    },
+
+    getObservation(): number[] {
+      return this.engine?.getObservation() || []
+    },
+
+    layersEqual(a: number[], b: number[]): boolean {
+      if (a.length !== b.length) return false
+      for (let i = 0; i < a.length; i += 1) {
+        if (a[i] !== b[i]) return false
+      }
+      return true
     },
   },
 })
@@ -671,17 +611,16 @@ export default defineComponent({
 }
 
 .game-canvas {
-  /* Scale canvas to be larger while keeping aspect ratio */
-  width: 432px;  /* 1.5x original 288px */
-  height: 768px; /* 1.5x original 512px */
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  max-width: 900px;
+  max-height: min(90vh, 820px);
+  height: auto;
+  aspect-ratio: 288 / 512; /* GameConfig.WIDTH / HEIGHT */
   border-radius: var(--radius-lg);
   box-shadow: 0 0 40px rgba(0, 217, 255, 0.15);
   image-rendering: pixelated;
   image-rendering: crisp-edges;
   cursor: pointer;
-  /* Ensure proper scaling */
   object-fit: contain;
 }
 
@@ -730,6 +669,7 @@ export default defineComponent({
   padding-top: 2rem;
   pointer-events: none;
   overflow-y: auto;
+  border-radius: var(--radius-lg);
 }
 
 .fast-mode-content {
@@ -755,14 +695,22 @@ export default defineComponent({
 }
 
 .fast-subtitle {
+  font-size: 1rem;
+  color: var(--color-text);
+  margin-top: 0.25rem;
+}
+
+.fast-backend {
   font-size: 0.8rem;
   color: var(--color-text-muted);
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .dqn-workflow-img {
   max-width: 100%;
-  max-height: 60vh;
+  max-height: 50vh;
   width: auto;
   height: auto;
   border-radius: 8px;
@@ -775,4 +723,3 @@ export default defineComponent({
   50% { opacity: 0.7; transform: scale(1.1); }
 }
 </style>
-

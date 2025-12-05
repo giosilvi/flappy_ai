@@ -20,9 +20,13 @@
           <span v-else-if="mode === 'manual'" class="badge badge-manual">Manual Control</span>
         </div>
 
-        <!-- Checkpoint controls (top of page, training only) -->
-        <div v-if="mode === 'training'" class="checkpoint-controls">
-          <button class="btn btn-secondary btn-small" @click="saveCheckpoint">
+        <!-- Checkpoint controls (top of page) -->
+        <div v-if="mode === 'configuring' || mode === 'training' || mode === 'eval'" class="checkpoint-controls">
+          <button 
+            v-if="mode === 'training' || mode === 'eval'" 
+            class="btn btn-secondary btn-small" 
+            @click="saveCheckpoint"
+          >
             💾 Save Checkpoint
           </button>
           <button class="btn btn-secondary btn-small" @click="triggerCheckpointLoad">
@@ -42,9 +46,8 @@
     <main class="app-main">
       <!-- Left Panel: Controls + Neural Network -->
       <aside class="left-panel" v-if="mode === 'configuring' || mode === 'training' || mode === 'eval'">
-        <!-- Training controls shown during configuring and training -->
+        <!-- Controls panel shown during configuring, training, and eval -->
         <ControlPanel
-          v-if="mode === 'configuring' || mode === 'training'"
           :epsilon="epsilon"
           :learningRate="learningRate"
           :epsilonDecaySteps="epsilonDecaySteps"
@@ -52,12 +55,16 @@
           :deathPenalty="deathPenalty"
           :stepPenalty="stepPenalty"
           :centerReward="centerReward"
-          :fastMode="fastMode"
+          :numInstances="numInstances"
+          :backend="backend"
+          :frameLimit30="frameLimit30"
           :autoDecay="autoDecay"
           :lrScheduler="lrScheduler"
-          :trainFreq="trainFreq"
           :isPaused="isPaused"
           :currentMode="mode"
+          :evalStats="evalStats"
+          :evalComplete="evalComplete"
+          :hasModel="hasModel"
           @update:epsilon="updateEpsilon"
           @update:learningRate="updateLearningRate"
           @update:epsilonDecaySteps="updateEpsilonDecaySteps"
@@ -65,44 +72,25 @@
           @update:deathPenalty="updateDeathPenalty"
           @update:stepPenalty="updateStepPenalty"
           @update:centerReward="updateCenterReward"
-          @update:fastMode="updateFastMode"
+          @update:frameLimit30="updateFrameLimit"
+          @update:numInstances="updateNumInstances"
           @update:autoDecay="updateAutoDecay"
           @update:lrScheduler="updateLRScheduler"
-          @update:trainFreq="updateTrainFreq"
           @update:isPaused="updatePaused"
           @update:mode="changeMode"
           @reset="resetTraining"
+          @restartEval="restartEval"
         />
 
-        <!-- Eval mode info -->
-        <div v-if="mode === 'eval'" class="eval-info panel">
-          <div class="panel-header">
-            <span>Evaluation Mode</span>
-            <button 
-              class="btn-icon-eval" 
-              :class="{ active: isPaused }"
-              @click="togglePause"
-              :title="isPaused ? 'Resume' : 'Pause'"
-            >
-              {{ isPaused ? '▶' : '⏸' }}
-            </button>
-          </div>
-          <p class="eval-text">Running fully greedy (ε=0)</p>
-          <p class="eval-text">No exploration, no training</p>
-          <p class="eval-status" v-if="isPaused">⏸ Paused</p>
-          <button class="btn btn-secondary" @click="backToTraining">
-            ← Back to Training
-          </button>
-        </div>
-
-        <!-- Neural network visualization -->
+        <!-- Neural network visualization (only for low instance counts) -->
         <NetworkViewer
+          v-if="numInstances <= 16"
           :activations="networkActivations"
           :qValues="qValues"
           :selectedAction="selectedAction"
           :hiddenLayers="hiddenLayersConfig"
           :weightHealth="weightHealth"
-          :fastMode="fastMode"
+          :fastMode="numInstances > 1"
         />
       </aside>
 
@@ -110,9 +98,14 @@
         <GameCanvas
           ref="gameCanvas"
           :mode="mode"
-          :fastMode="fastMode"
+          :numInstances="numInstances"
           :isPaused="isPaused"
           :hiddenLayersConfig="hiddenLayersConfig"
+          :frameLimit30="frameLimit30"
+          :epsilon="epsilon"
+          :learningRate="learningRate"
+          :autoDecay="autoDecay"
+          :epsilonDecaySteps="epsilonDecaySteps"
           @score-update="handleScoreUpdate"
           @episode-end="handleEpisodeEnd"
           @metrics-update="handleMetricsUpdate"
@@ -120,6 +113,7 @@
           @weight-health-update="handleWeightHealthUpdate"
           @auto-eval-result="handleAutoEvalResult"
           @architecture-loaded="handleArchitectureLoaded"
+          @backend-ready="handleBackendReady"
         />
         <div v-if="mode === 'idle'" class="game-overlay">
           <div class="overlay-content idle-content">
@@ -138,6 +132,37 @@
             :initialConfig="hiddenLayersConfig"
             @start="startTrainingWithConfig"
           />
+        </div>
+
+        <!-- Eval Stats Overlay (shown only when all instances complete) -->
+        <div v-if="mode === 'eval' && evalComplete" class="game-overlay eval-overlay">
+          <div class="eval-stats-panel">
+            <h3 class="eval-title">🎯 Evaluation Complete</h3>
+            <p class="eval-subtitle">{{ evalTargetInstances }} instance{{ evalTargetInstances > 1 ? 's' : '' }} evaluated with ε=0</p>
+            
+            <div class="eval-results-grid">
+              <div class="eval-stat-box">
+                <span class="stat-number">{{ evalStats?.count || 0 }}</span>
+                <span class="stat-label">Episodes</span>
+              </div>
+              <div class="eval-stat-box">
+                <span class="stat-number">{{ evalStats?.min || 0 }}</span>
+                <span class="stat-label">Min Score</span>
+              </div>
+              <div class="eval-stat-box highlight">
+                <span class="stat-number">{{ evalStats ? evalStats.avg.toFixed(1) : '0' }}</span>
+                <span class="stat-label">Avg Score</span>
+              </div>
+              <div class="eval-stat-box best">
+                <span class="stat-number">{{ evalStats?.max || 0 }}</span>
+                <span class="stat-label">Max Score</span>
+              </div>
+            </div>
+            
+            <button class="btn btn-primary eval-restart-btn" @click="restartEval">
+              🔄 Run Again
+            </button>
+          </div>
         </div>
         
         <!-- Game Over Overlay -->
@@ -190,6 +215,8 @@
             :avgLength="avgLength"
             :isTraining="mode === 'training' && !isPaused"
             :isWarmup="isWarmup"
+            :numInstances="numInstances"
+            :episodesPerSecond="episodesPerSecond"
           />
         </div>
       </aside>
@@ -226,6 +253,8 @@ import NetworkConfig from './components/NetworkConfig.vue'
 import Leaderboard from './components/Leaderboard.vue'
 import LeaderboardPanel from './components/LeaderboardPanel.vue'
 import { apiClient, calculateAdjustedScore } from './services/apiClient'
+import type { BackendType } from './rl/backendUtils'
+import type { TrainingMetrics } from './rl/types'
 
 export type GameMode = 'idle' | 'configuring' | 'training' | 'eval' | 'manual'
 
@@ -248,17 +277,19 @@ export default defineComponent({
       score: 0,
       bestScore: 0,
       stepsPerSecond: 0,
-      epsilon: 1.0,
-      learningRate: 0.001,
+      episodesPerSecond: 0,
+      epsilon: 0.5,  // Starting epsilon (will be updated from worker metrics)
+      learningRate: 0.0005,
       passPipeReward: 1.0,
       deathPenalty: -1.0,
       stepPenalty: -0.01,
-      centerReward: 0.1,
-      fastMode: false,
+      centerReward: 0.15,
+      numInstances: 1,
+      backend: 'cpu' as BackendType,
       autoDecay: true,
       lrScheduler: false,
-      trainFreq: 8,
       epsilonDecaySteps: 200000,
+      frameLimit30: true,
       avgReward: 0,
       episodeReward: 0,
       loss: 0,
@@ -272,6 +303,12 @@ export default defineComponent({
       autoEvalTrials: 100,
       lastAutoEvalResult: null as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number } | null,
       autoEvalHistory: [] as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }[],
+      evalStats: null as { min: number; max: number; avg: number; count: number } | null,
+      evalScores: [] as number[],
+      evalComplete: false,
+      evalTargetInstances: 1,  // Number of instances when eval started (locked during eval)
+      savedEpsilonBeforeEval: 0.3,  // Epsilon saved before entering eval mode
+      hasModel: false,  // True when a model has been trained or loaded from checkpoint
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
       selectedAction: 0,
@@ -282,47 +319,39 @@ export default defineComponent({
       showLeaderboard: false,
       hiddenLayersConfig: [64, 64] as number[],
       lowestLeaderboardScore: 0,
-      lastSubmittedBestScore: 0,  // Track the last submitted best score to prevent duplicate submissions
-      _loggedNetworkSave: false,  // Debug flag
+      lastSubmittedBestScore: 0,
+      _loggedNetworkSave: false,
     }
   },
   computed: {
     canSubmitScore(): boolean {
-      // Can submit if we have a qualifying best score
       return this.canSubmitToLeaderboard
     },
-    // Epsilon actually used by the policy: training uses slider epsilon, eval is fully greedy (ε=0)
     effectiveEpsilon(): number {
       return this.mode === 'eval' ? 0 : this.epsilon
     },
-    // Calculate total network parameters for leaderboard submission
     networkParams(): number {
       const inputDim = 6
       const outputDim = 2
       const layers = [inputDim, ...this.hiddenLayersConfig, outputDim]
       let totalParams = 0
       for (let i = 0; i < layers.length - 1; i++) {
-        // weights + biases for each layer
         totalParams += layers[i] * layers[i + 1] + layers[i + 1]
       }
       return totalParams
     },
-    // Network architecture string for leaderboard display
     networkArchitecture(): string {
       const layers = [6, ...this.hiddenLayersConfig, 2]
       return layers.join('→')
     },
-    // Check if current best score qualifies for leaderboard and hasn't been submitted yet
     canSubmitToLeaderboard(): boolean {
       if (this.bestScore <= 0) return false
-      // Don't allow resubmitting the same best score
       if (this.bestScore === this.lastSubmittedBestScore) return false
       const adjustedScore = calculateAdjustedScore(this.bestScore, this.networkParams)
       return adjustedScore > this.lowestLeaderboardScore
     },
   },
   async mounted() {
-    // Load leaderboard threshold on startup
     await this.refreshLeaderboardThreshold()
   },
   methods: {
@@ -338,7 +367,6 @@ export default defineComponent({
       }
     },
     openTrainingConfig() {
-      // Show config overlay - user must click "Start Training" to begin
       this.mode = 'configuring'
       this.showGameOver = false
       this.isPaused = false
@@ -346,6 +374,7 @@ export default defineComponent({
     startTrainingWithConfig(hiddenLayers: number[]) {
       this.hiddenLayersConfig = hiddenLayers
       this.mode = 'training'
+      this.hasModel = true
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
         gameCanvas.startTraining(hiddenLayers)
@@ -359,55 +388,41 @@ export default defineComponent({
     },
     handleEpisodeEnd(stats: { score: number; reward: number; length?: number }) {
       this.lastGameScore = stats.score
-      // Store the final episode reward and length (for charting)
       this.episodeReward = stats.reward
       if (stats.length !== undefined) {
         this.episodeLength = stats.length
       }
       
-      // In manual mode, show game over screen
       if (this.mode === 'manual') {
         this.showGameOver = true
       }
-      // For training, auto-continue (no game over screen)
+      
+      // Record eval scores when in eval mode
+      if (this.mode === 'eval') {
+        this.recordEvalScore(stats.score)
+      }
     },
-    handleMetricsUpdate(metrics: {
-      episode: number
-      avgReward: number
-      episodeReward: number
-      episodeLength: number
-      epsilon: number
-      loss: number
-      stepsPerSecond: number
-      bufferSize: number
-      totalSteps: number
-      avgLength: number
-      isWarmup?: boolean
-      learningRate?: number
-      isAutoEval?: boolean
-      autoEvalTrial?: number
-      autoEvalTrials?: number
-    }) {
+    handleMetricsUpdate(metrics: TrainingMetrics) {
       this.episode = metrics.episode
       this.avgReward = metrics.avgReward
-      // In fast mode, episodeReward comes from metrics (worker reports last completed episode)
-      // In normal mode, it's set by handleEpisodeEnd
-      if (this.fastMode) {
-        this.episodeReward = metrics.episodeReward
-        this.episodeLength = metrics.episodeLength
+      this.episodeReward = metrics.episodeReward
+      this.episodeLength = metrics.episodeLength
+      // Don't update epsilon during eval mode - it must stay at 0 (greedy policy)
+      if (this.mode !== 'eval') {
+        this.epsilon = metrics.epsilon
       }
-      this.epsilon = metrics.epsilon
       this.loss = metrics.loss
       this.stepsPerSecond = metrics.stepsPerSecond
+      this.episodesPerSecond = metrics.episodesPerSecond || 0
       this.bufferSize = metrics.bufferSize
       this.totalSteps = metrics.totalSteps
       this.avgLength = metrics.avgLength
       this.isWarmup = metrics.isWarmup ?? false
-      // Update learning rate from metrics (may change with scheduler)
+      
       if (metrics.learningRate !== undefined) {
         this.learningRate = metrics.learningRate
       }
-      // Update auto-eval state
+      
       this.isAutoEval = metrics.isAutoEval ?? false
       this.autoEvalTrial = metrics.autoEvalTrial ?? 0
       this.autoEvalTrials = metrics.autoEvalTrials ?? 100
@@ -415,23 +430,49 @@ export default defineComponent({
     handleAutoEvalResult(result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) {
       console.log('[App] Auto-eval result:', result)
       this.lastAutoEvalResult = result
-      // Show the best score from this auto-eval as "Last Score"
       this.lastGameScore = result.maxScore
-      // Add to history (keep last 10)
       this.autoEvalHistory.push(result)
       if (this.autoEvalHistory.length > 10) {
         this.autoEvalHistory.shift()
       }
-      // Update best score if auto-eval found a better one
       if (result.maxScore > this.bestScore) {
         this.bestScore = result.maxScore
       }
+      
+      // For manual eval mode: Only update stats when eval is already complete
+      // (completion is tracked by recordEvalScore via individual episodeEnd events)
+      // This prevents stale auto-eval results from training mode from prematurely 
+      // marking manual eval as complete
+      if (this.mode === 'eval' && this.evalComplete) {
+        // Merge counts safely: prefer existing evalScores if we already collected more
+        const finalScores = result.scores.length >= this.evalScores.length
+          ? result.scores
+          : this.evalScores
+
+        // Only override evalScores if the incoming result has at least as many scores
+        if (result.scores.length >= this.evalScores.length) {
+          this.evalScores = result.scores
+        }
+
+        this.evalStats = {
+          min: result.minScore,
+          max: result.maxScore,
+          avg: result.avgScore,
+          count: finalScores.length,
+        }
+      }
     },
     handleArchitectureLoaded(hiddenLayers: number[]) {
-      // Called when a checkpoint with architecture info is loaded
       this.hiddenLayersConfig = hiddenLayers
-      // Go to configuring mode so user can review and start training
-      this.mode = 'configuring'
+      // When checkpoint is loaded, go to training mode (paused) so eval is available
+      this.mode = 'training'
+      this.hasModel = true
+      this.isPaused = true
+      console.log('[App] Checkpoint loaded, model ready for eval')
+    },
+    handleBackendReady(backend: BackendType) {
+      this.backend = backend
+      console.log('[App] Backend ready:', backend)
     },
     handleNetworkUpdate(viz: { activations: number[][]; qValues: number[]; selectedAction: number }) {
       this.networkActivations = viz.activations
@@ -440,7 +481,6 @@ export default defineComponent({
         this.selectedAction = viz.selectedAction
       }
       
-      // Store network data in localStorage for the detail window
       try {
         const dataToSave = {
           activations: this.networkActivations,
@@ -449,21 +489,19 @@ export default defineComponent({
           hiddenLayers: this.hiddenLayersConfig,
         }
         localStorage.setItem('flappy-ai-network-data', JSON.stringify(dataToSave))
-        // Debug: Log first time
         if (!this._loggedNetworkSave) {
-          console.log('[App] Network data saved to localStorage:', {
-            hasActivations: !!dataToSave.activations?.length,
-            hiddenLayers: dataToSave.hiddenLayers,
-            origin: window.location.origin,
-          })
+          console.log('[App] Network data saved to localStorage')
           this._loggedNetworkSave = true
         }
       } catch (e) {
         console.warn('[App] Failed to save network data:', e)
       }
     },
-    handleWeightHealthUpdate(health: { delta: number; avgSign: number }) {
-      this.weightHealth = health
+    handleWeightHealthUpdate(health: any) {
+      // Normalize worker payload to the NetworkViewer shape
+      const delta = health?.weightDelta ?? health?.delta ?? 0
+      const avgSign = health?.avgGradSign ?? health?.avgSign ?? 0
+      this.weightHealth = { delta, avgSign }
     },
     updateEpsilon(value: number) {
       this.epsilon = value
@@ -477,9 +515,13 @@ export default defineComponent({
     updateLearningRate(value: number) {
       this.learningRate = value
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
-      if (gameCanvas && (gameCanvas as any).setLearningRate) {
-        ;(gameCanvas as any).setLearningRate(value)
+      if (gameCanvas) {
+        gameCanvas.setLearningRate(value)
       }
+    },
+    updateNumInstances(value: number) {
+      this.numInstances = value
+      // GameCanvas updates automatically via prop watch
     },
     updatePassPipeReward(value: number) {
       this.passPipeReward = value
@@ -509,8 +551,12 @@ export default defineComponent({
         gameCanvas.setRewardConfig({ centerReward: value })
       }
     },
-    updateFastMode(value: boolean) {
-      this.fastMode = value
+    updateFrameLimit(value: boolean) {
+      this.frameLimit30 = value
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas) {
+        gameCanvas.setFrameLimit(value)
+      }
     },
     updateAutoDecay(value: boolean) {
       this.autoDecay = value
@@ -522,8 +568,8 @@ export default defineComponent({
     updateLRScheduler(value: boolean) {
       this.lrScheduler = value
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
-      if (gameCanvas && (gameCanvas as any).setLRScheduler) {
-        ;(gameCanvas as any).setLRScheduler(value)
+      if (gameCanvas) {
+        gameCanvas.setLRScheduler(value)
       }
     },
     updateEpsilonDecaySteps(value: number) {
@@ -533,17 +579,10 @@ export default defineComponent({
         gameCanvas.setEpsilonDecaySteps(value)
       }
     },
-    updateTrainFreq(value: number) {
-      this.trainFreq = value
-      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
-      if (gameCanvas && (gameCanvas as any).setTrainFreq) {
-        ;(gameCanvas as any).setTrainFreq(value)
-      }
-    },
     saveCheckpoint() {
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas && (gameCanvas as any).saveCheckpointToFile) {
-        ;(gameCanvas as any).saveCheckpointToFile()
+        (gameCanvas as any).saveCheckpointToFile()
       }
     },
     triggerCheckpointLoad() {
@@ -563,12 +602,27 @@ export default defineComponent({
         const text = typeof reader.result === 'string' ? reader.result : ''
         const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
         if (text && gameCanvas && (gameCanvas as any).loadCheckpointFromJSON) {
-          ;(gameCanvas as any).loadCheckpointFromJSON(text)
+          (gameCanvas as any).loadCheckpointFromJSON(text)
         }
       }
       reader.readAsText(file)
     },
     updatePaused(value: boolean) {
+      // When resuming eval, ensure evalTargetInstances is clamped to max 64
+      // and reset eval state if instance count changed while paused
+      if (!value && this.mode === 'eval') {
+        const maxEvalInstances = 64
+        const clampedInstances = Math.min(this.numInstances, maxEvalInstances)
+        // Always ensure evalTargetInstances is clamped (in case it was > 100 somehow)
+        if (this.evalTargetInstances !== clampedInstances) {
+          // Instance count changed during pause - reset eval state for new count
+          this.evalStats = null
+          this.evalScores = []
+          this.evalComplete = false
+          this.evalTargetInstances = clampedInstances
+        }
+      }
+      
       this.isPaused = value
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
@@ -584,27 +638,37 @@ export default defineComponent({
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       
       if (newMode === 'eval') {
-        // Switch to eval mode - fully greedy policy (ε=0), normal speed
+        // Save current epsilon before entering eval (to restore when returning to training)
+        this.savedEpsilonBeforeEval = this.epsilon
         this.mode = 'eval'
-        this.epsilon = 0  // Force epsilon to 0 for evaluation (purely greedy)
-        this.fastMode = false
+        this.epsilon = 0
         this.isPaused = false
         this.showGameOver = false
-        // Set epsilon on agent as well
+        // Reset eval stats when entering eval mode
+        this.evalStats = null
+        this.evalScores = []
+        this.evalComplete = false
+        // Clamp eval instances to max 64 (matches UnifiedDQN.startManualEval limit)
+        const maxEvalInstances = 64
+        this.evalTargetInstances = Math.min(this.numInstances, maxEvalInstances)
         if (gameCanvas) {
-          gameCanvas.setEpsilon(0)
+          // Note: startEval() sets epsilon=0 internally after initialization completes
+          // to avoid race condition where setEpsilon fires before unifiedDQN is ready
           gameCanvas.startEval()
         }
       } else if (newMode === 'training') {
-        // Resume training
         this.mode = 'training'
         this.isPaused = false
         this.showGameOver = false
+        // Restore epsilon if coming from eval mode (was set to 0)
+        if (this.epsilon === 0 && this.savedEpsilonBeforeEval > 0) {
+          this.epsilon = this.savedEpsilonBeforeEval
+          gameCanvas?.setEpsilon(this.savedEpsilonBeforeEval)
+        }
         if (gameCanvas) {
           gameCanvas.startTraining()
         }
       } else if (newMode === 'manual') {
-        // Switch to manual mode
         this.mode = 'manual'
         this.showGameOver = false
         if (gameCanvas) {
@@ -637,8 +701,8 @@ export default defineComponent({
       this.autoEvalHistory = []
       this.isPaused = false
       this.showGameOver = false
-      this.lastSubmittedBestScore = 0  // Reset to allow new submissions
-      // Go to configuring mode so user can adjust network config and click "Start Training"
+      this.lastSubmittedBestScore = 0
+      this.hasModel = false
       this.mode = 'configuring'
     },
     restartGame() {
@@ -671,14 +735,45 @@ export default defineComponent({
         gameCanvas.startTraining()
       }
     },
+    restartEval() {
+      // Clear eval stats and restart evaluation
+      this.evalStats = null
+      this.evalScores = []
+      this.evalComplete = false
+      // Clamp eval instances to max 64 (matches UnifiedDQN.startManualEval limit)
+      const maxEvalInstances = 64
+      this.evalTargetInstances = Math.min(this.numInstances, maxEvalInstances)
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas) {
+        gameCanvas.startEval()
+      }
+    },
+    recordEvalScore(score: number) {
+      // Ignore delayed episode-end events if eval is already complete
+      // (e.g., from auto-eval results that arrived before all individual episode-end events)
+      if (this.evalComplete) {
+        return
+      }
+      
+      this.evalScores.push(score)
+      // Update stats
+      const scores = this.evalScores
+      this.evalStats = {
+        min: Math.min(...scores),
+        max: Math.max(...scores),
+        avg: scores.reduce((a, b) => a + b, 0) / scores.length,
+        count: scores.length,
+      }
+      // Check if all instances have completed (use locked target, not current numInstances)
+      if (scores.length >= this.evalTargetInstances) {
+        this.evalComplete = true
+      }
+    },
     async handleScoreSubmitted(result: { entry: { name: string; score: number }; isNewChampion: boolean }) {
-      // Mark this score as submitted to prevent duplicate submissions
       this.lastSubmittedBestScore = this.bestScore
       if (result.isNewChampion) {
-        // Show celebration message
         console.log('🎉 New champion:', result.entry.name, 'with score', result.entry.score)
       }
-      // Refresh the leaderboard threshold
       await this.refreshLeaderboardThreshold()
     },
   },
@@ -808,6 +903,110 @@ export default defineComponent({
   background: rgba(15, 15, 35, 0.9);
 }
 
+/* Eval Stats Overlay */
+.eval-overlay {
+  background: rgba(15, 15, 35, 0.92);
+}
+
+.eval-stats-panel {
+  background: var(--color-bg-mid);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  text-align: center;
+  min-width: 320px;
+  max-width: 400px;
+}
+
+.eval-title {
+  font-size: 1.4rem;
+  color: var(--color-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.eval-subtitle {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: var(--spacing-lg);
+}
+
+.eval-results-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.eval-stat-box {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.eval-stat-box .stat-number {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.eval-stat-box .stat-label {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.eval-stat-box.highlight {
+  border-color: var(--color-primary);
+  background: rgba(0, 217, 255, 0.1);
+}
+
+.eval-stat-box.highlight .stat-number {
+  color: var(--color-primary);
+}
+
+.eval-stat-box.best {
+  border-color: var(--color-accent);
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.eval-stat-box.best .stat-number {
+  color: var(--color-accent);
+}
+
+.eval-waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-xl) 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.waiting-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.eval-restart-btn {
+  width: 100%;
+  margin-top: var(--spacing-sm);
+}
+
 .overlay-content {
   text-align: center;
 }
@@ -872,19 +1071,6 @@ export default defineComponent({
   50% { transform: scale(1.2); }
 }
 
-.instructions {
-  margin-bottom: var(--spacing-lg);
-  font-size: 0.9rem;
-}
-
-.instructions kbd {
-  background: var(--color-bg-light);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  font-family: var(--font-body);
-}
-
 .start-buttons {
   display: flex;
   gap: var(--spacing-md);
@@ -905,26 +1091,6 @@ export default defineComponent({
   flex-direction: column;
   gap: var(--spacing-md);
   overflow-y: auto;
-}
-
-.sidebar-footer {
-  display: flex;
-  gap: var(--spacing-lg);
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--color-border);
-}
-
-.toggle-label {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.toggle-label input {
-  accent-color: var(--color-primary);
 }
 
 .app-footer {
@@ -988,55 +1154,5 @@ export default defineComponent({
   .start-buttons {
     flex-direction: column;
   }
-}
-
-/* Eval mode styles */
-.eval-info .panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.eval-text {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  margin: var(--spacing-xs) 0;
-}
-
-.eval-status {
-  font-size: 0.9rem;
-  color: var(--color-accent);
-  font-weight: 600;
-  margin: var(--spacing-sm) 0;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: rgba(255, 107, 157, 0.1);
-  border-radius: var(--radius-sm);
-  text-align: center;
-}
-
-.btn-icon-eval {
-  background: var(--color-bg-light);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  font-size: 1rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-icon-eval:hover {
-  background: var(--color-bg-mid);
-  border-color: var(--color-primary);
-}
-
-.btn-icon-eval.active {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: var(--color-bg-dark);
 }
 </style>

@@ -288,7 +288,8 @@ export default defineComponent({
       // Stability: 5 = very stable, 1 = very unstable
       const stability = Math.max(1, Math.min(5, Math.round(5 - oscillationRate * 8)))
       
-      return { status, statusText, deltaRate: recentDelta, stability }
+      const safeDelta = Number.isFinite(recentDelta) ? recentDelta : 0
+      return { status, statusText, deltaRate: safeDelta, stability }
     },
     sparklinePoints(): string {
       if (this.deltaHistory.length < 2) return '0,10 100,10'
