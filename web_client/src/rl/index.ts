@@ -5,12 +5,9 @@
  */
 
 export { ReplayBuffer, type Transition } from './ReplayBuffer'
-export { NeuralNetwork, createDQNNetwork, type NetworkConfig } from './NeuralNetwork'
+export { NeuralNetwork, createDQNNetwork, createNetworkPair, type NetworkConfig } from './NeuralNetwork'
 
-// Legacy DQNAgent (for reference/fallback)
-export { DQNAgent } from './DQNAgent'
-
-// Worker-based agent (CPU, recommended)
+// Worker-based agent
 export { WorkerDQNAgent, DefaultDQNConfig, type DQNConfig } from './WorkerDQNAgent'
 
 // GPU-accelerated agent with multi-bird support
@@ -18,8 +15,7 @@ export { GPUDQNAgent, DefaultGPUDQNConfig, checkGPUSupport, type GPUDQNConfig } 
 export { NeuralNetworkTF, createDQNNetworkTF, initTensorFlow, isWebGPUSupported } from './NeuralNetworkTF'
 
 export { TrainingLoop, type TrainingCallbacks } from './TrainingLoop'
-export { GPUTrainingLoop, type GPUTrainingCallbacks } from './GPUTrainingLoop'
-export type { TrainingMetrics } from './types'
+export type { TrainingMetrics, AutoEvalResult } from './types'
 
 // Network visualization type (simplified - no weights)
 export interface NetworkVisualization {

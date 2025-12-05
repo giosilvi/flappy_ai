@@ -103,21 +103,15 @@
           </button>
         </div>
 
-        <!-- Neural network visualization (hidden during fast training) -->
+        <!-- Neural network visualization -->
         <NetworkViewer
-          v-if="!fastMode"
           :activations="networkActivations"
           :qValues="qValues"
           :selectedAction="selectedAction"
           :hiddenLayers="hiddenLayersConfig"
+          :weightHealth="weightHealth"
+          :fastMode="fastMode"
         />
-        <div v-else class="fast-mode-nn-placeholder panel">
-          <div class="panel-header">Neural Network</div>
-          <div class="placeholder-content">
-            <span class="placeholder-icon">⚡</span>
-            <span class="placeholder-text">Visualization paused during fast training</span>
-          </div>
-        </div>
       </aside>
 
       <div class="game-area">
@@ -131,6 +125,7 @@
           @episode-end="handleEpisodeEnd"
           @metrics-update="handleMetricsUpdate"
           @network-update="handleNetworkUpdate"
+          @weight-health-update="handleWeightHealthUpdate"
           @auto-eval-result="handleAutoEvalResult"
           @architecture-loaded="handleArchitectureLoaded"
         />
@@ -193,6 +188,7 @@
             :epsilon="effectiveEpsilon"
             :avgReward="avgReward"
             :episodeReward="episodeReward"
+            :episodeLength="episodeLength"
             :loss="loss"
             :episode="episode"
             :bestScore="bestScore"
@@ -285,6 +281,7 @@ export default defineComponent({
       bufferSize: 0,
       totalSteps: 0,
       avgLength: 0,
+      episodeLength: 0,
       isWarmup: true,
       isAutoEval: false,
       autoEvalTrial: 0,
@@ -294,6 +291,7 @@ export default defineComponent({
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
       selectedAction: 0,
+      weightHealth: null as { delta: number; avgSign: number } | null,
       isPaused: false,
       showGameOver: false,
       lastGameScore: 0,
@@ -396,10 +394,13 @@ export default defineComponent({
         this.bestScore = newScore
       }
     },
-    handleEpisodeEnd(stats: { score: number; reward: number }) {
+    handleEpisodeEnd(stats: { score: number; reward: number; length?: number }) {
       this.lastGameScore = stats.score
-      // Store the final episode reward (for charting)
+      // Store the final episode reward and length (for charting)
       this.episodeReward = stats.reward
+      if (stats.length !== undefined) {
+        this.episodeLength = stats.length
+      }
       
       // In manual mode, show game over screen
       if (this.mode === 'manual') {
@@ -411,6 +412,7 @@ export default defineComponent({
       episode: number
       avgReward: number
       episodeReward: number
+      episodeLength: number
       epsilon: number
       loss: number
       stepsPerSecond: number
@@ -434,6 +436,7 @@ export default defineComponent({
       // In normal mode, it's set by handleEpisodeEnd
       if (this.fastMode) {
         this.episodeReward = metrics.episodeReward
+        this.episodeLength = metrics.episodeLength
       }
       this.epsilon = metrics.epsilon
       this.loss = metrics.loss
@@ -518,6 +521,9 @@ export default defineComponent({
       } catch (e) {
         console.warn('[App] Failed to save network data:', e)
       }
+    },
+    handleWeightHealthUpdate(health: { delta: number; avgSign: number }) {
+      this.weightHealth = health
     },
     updateEpsilon(value: number) {
       this.epsilon = value
@@ -702,6 +708,7 @@ export default defineComponent({
       this.bufferSize = 0
       this.totalSteps = 0
       this.avgLength = 0
+      this.episodeLength = 0
       this.epsilon = 1.0
       this.autoDecay = true
       this.isWarmup = true
@@ -855,37 +862,6 @@ export default defineComponent({
   gap: var(--spacing-md);
   overflow-y: auto;
   max-height: 100%;
-}
-
-.fast-mode-nn-placeholder {
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-}
-
-.fast-mode-nn-placeholder .placeholder-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-sm);
-  color: var(--color-text-muted);
-}
-
-.fast-mode-nn-placeholder .placeholder-icon {
-  font-size: 2rem;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-.fast-mode-nn-placeholder .placeholder-text {
-  font-size: 0.8rem;
-  text-align: center;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
 }
 
 .game-area {

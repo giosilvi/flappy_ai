@@ -467,3 +467,19 @@ export function createDQNNetwork(
   
   return new NeuralNetwork({ layers, learningRate })
 }
+
+/**
+ * Create a policy/target network pair for DQN
+ * Target network is initialized with same weights as policy network
+ */
+export function createNetworkPair(
+  inputDim: number,
+  hiddenLayers: number[],
+  outputDim: number,
+  learningRate: number
+): { policy: NeuralNetwork; target: NeuralNetwork } {
+  const policy = createDQNNetwork(inputDim, hiddenLayers, outputDim, learningRate)
+  const target = createDQNNetwork(inputDim, hiddenLayers, outputDim, learningRate)
+  target.copyWeightsFrom(policy)
+  return { policy, target }
+}

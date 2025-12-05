@@ -70,6 +70,7 @@ export class WorkerDQNAgent {
   private lastQValues: number[] = [0, 0]
   private lastWorkerMetrics: TrainingMetrics | null = null
   private fastMetricsCallback?: (metrics: TrainingMetrics) => void
+  private weightHealthCallback?: (health: { delta: number; avgSign: number }) => void
   private autoEvalCallback?: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void
 
   // Worker ready state
@@ -164,6 +165,10 @@ export class WorkerDQNAgent {
             this.fastMetricsCallback?.(message.metrics)
             break
 
+          case 'weightHealth':
+            this.weightHealthCallback?.({ delta: message.delta, avgSign: message.avgSign })
+            break
+
           case 'autoEvalResult':
             console.log('[WorkerDQNAgent] Auto-eval result:', message.result)
             this.autoEvalCallback?.(message.result)
@@ -213,8 +218,9 @@ export class WorkerDQNAgent {
     this.lastQValues = this.inferenceNetwork.predict(state)
 
     // Epsilon-greedy exploration
+    // Use 20% flap probability (not 50%) because flapping has momentum
     if (training && Math.random() < this.epsilon) {
-      return Math.floor(Math.random() * this.config.actionDim)
+      return Math.random() < 0.2 ? 1 : 0  // 20% flap, 80% no-flap
     }
 
     // Greedy action
@@ -389,6 +395,10 @@ export class WorkerDQNAgent {
 
   onFastMetrics(callback: (metrics: TrainingMetrics) => void): void {
     this.fastMetricsCallback = callback
+  }
+
+  onWeightHealth(callback: (health: { delta: number; avgSign: number }) => void): void {
+    this.weightHealthCallback = callback
   }
 
   onAutoEvalResult(callback: (result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) => void): void {

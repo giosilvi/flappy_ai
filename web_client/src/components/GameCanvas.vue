@@ -54,7 +54,7 @@ export default defineComponent({
       default: () => [64, 64],
     },
   },
-  emits: ['score-update', 'episode-end', 'state-update', 'metrics-update', 'network-update', 'auto-eval-result', 'architecture-loaded'],
+  emits: ['score-update', 'episode-end', 'state-update', 'metrics-update', 'network-update', 'weight-health-update', 'auto-eval-result', 'architecture-loaded'],
   data() {
     return {
       engine: null as GameEngine | null,
@@ -131,6 +131,11 @@ export default defineComponent({
     startGame() {
       if (!this.engine || !this.renderer) return
 
+      // Stop fast training if it was active (worker runs independently)
+      if (this.trainingLoop) {
+        this.trainingLoop.setFastMode(false)
+      }
+
       this.engine.reset()
       this.renderer.resetFloor()
       this.pendingAction = 0
@@ -144,55 +149,30 @@ export default defineComponent({
       this.inputController?.enable(container, this.handleInput)
 
       this.lastFrameTime = performance.now()
-      this.gameLoop()
+      // Use $nextTick to ensure mode prop has updated before starting the loop
+      this.$nextTick(() => this.gameLoop())
     },
 
     startTraining(hiddenLayers: number[] = [64, 64]) {
       if (!this.engine || !this.renderer) return
 
-      // Dispose of existing training loops if switching modes
-      if (this.useGPU && this.trainingLoop) {
-        this.trainingLoop.dispose()
-        this.trainingLoop = null
-      }
-      if (!this.useGPU && this.gpuTrainingLoop) {
-        this.gpuTrainingLoop.dispose()
-        this.gpuTrainingLoop = null
-      }
-
-      if (this.useGPU) {
-        // Initialize GPU training loop
-        if (!this.gpuTrainingLoop && this.engine) {
-          this.gpuTrainingLoop = new GPUTrainingLoop(this.engine as GameEngine, {
-            inputDim: 6,
-            hiddenLayers,
-            actionDim: 2,
-            numBirds: this.numBirds,
-          }, {
-            onStep: (metrics) => {
-              this.$emit('metrics-update', metrics)
-            },
-            onAutoEvalResult: (result) => {
-              this.$emit('auto-eval-result', result)
-            },
-          })
-        }
-      } else {
-        // Initialize CPU training loop
-        if (!this.trainingLoop && this.engine) {
-          this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
-            inputDim: 6,
-            hiddenLayers,
-            actionDim: 2,
-          }, {
-            onStep: (metrics) => {
-              this.$emit('metrics-update', metrics)
-            },
-            onAutoEvalResult: (result) => {
-              this.$emit('auto-eval-result', result)
-            },
-          })
-        }
+      // Initialize training loop if not already (or reinitialize if architecture changed)
+      if (!this.trainingLoop && this.engine) {
+        this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
+          inputDim: 6,
+          hiddenLayers,
+          actionDim: 2,
+        }, {
+          onStep: (metrics) => {
+            this.$emit('metrics-update', metrics)
+          },
+          onAutoEvalResult: (result) => {
+            this.$emit('auto-eval-result', result)
+          },
+          onWeightHealth: (health) => {
+            this.$emit('weight-health-update', health)
+          },
+        })
       }
 
       this.renderer.resetFloor()
@@ -210,14 +190,14 @@ export default defineComponent({
 
       this.lastFrameTime = performance.now()
       this.lastMetricsTime = performance.now()
-      this.runTrainingLoop()
+      // Use $nextTick to ensure mode prop has updated before starting the loop
+      this.$nextTick(() => this.runTrainingLoop())
     },
 
     runTrainingLoop() {
-      // Get the active training loop (GPU or CPU)
-      const activeLoop = this.useGPU ? this.gpuTrainingLoop : this.trainingLoop
-      
-      if (!this.isRunning || !activeLoop || !this.renderer || !this.engine) return
+      // Guard: only run if we're in training mode (prevents race with other loops)
+      if (this.mode !== 'training') return
+      if (!this.isRunning || !this.trainingLoop || !this.renderer || !this.engine) return
       
       if (this.internalPaused) {
         this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
@@ -264,6 +244,7 @@ export default defineComponent({
           this.$emit('episode-end', {
             score: stepResult.result.info.score,
             reward: stepResult.finalReward,  // Use the captured final reward
+            length: stepResult.finalLength,  // Include episode length for charting
           })
           this.lastScore = 0
         }
@@ -272,19 +253,21 @@ export default defineComponent({
         const gameState = this.engine.getState()
         const cumulativeReward = activeLoop.getMetrics().episodeReward
         this.renderer.render(gameState as RawGameState, false, this.lastReward, cumulativeReward)
+
+        // Emit network visualization immediately after step (in sync with action)
+        const viz = this.trainingLoop.getNetworkVisualization()
+        this.$emit('network-update', viz)
       }
 
-      // Update UI at game FPS to match game steps
+      // Update metrics at game FPS
       if (now - this.lastMetricsTime >= GameConfig.FRAME_TIME) {
         const metrics = activeLoop.getMetrics()
         this.$emit('metrics-update', metrics)
-
-        // Emit network visualization with REAL activations
-        const viz = activeLoop.getNetworkVisualization()
-        this.$emit('network-update', viz)
-
         this.lastMetricsTime = now
       }
+
+      // Weight health is now emitted by the worker via onWeightHealth callback
+      // (normalized by training steps for consistency between normal and fast mode)
 
       this.animationId = requestAnimationFrame(() => this.runTrainingLoop())
     },
@@ -314,6 +297,8 @@ export default defineComponent({
     },
 
     gameLoop() {
+      // Guard: only run if we're in manual mode (prevents race with other loops)
+      if (this.mode !== 'manual') return
       if (!this.isRunning || !this.engine || !this.renderer) return
 
       const now = performance.now()
@@ -344,18 +329,7 @@ export default defineComponent({
               score: result.info.score,
               reward: result.reward,
             })
-
-            // In training mode, auto-restart after delay
-            if (this.mode === 'training') {
-              setTimeout(() => {
-                if (this.isRunning && this.mode === 'training') {
-                  this.engine?.reset()
-                  this.renderer?.resetFloor()
-                  this.gameOver = false
-                  this.lastScore = 0
-                }
-              }, 500)
-            }
+            // Manual mode: game stays over until user restarts
           }
 
           // Emit state for NN visualization
@@ -504,6 +478,9 @@ export default defineComponent({
           },
           onAutoEvalResult: (result) => {
             this.$emit('auto-eval-result', result)
+          },
+          onWeightHealth: (health) => {
+            this.$emit('weight-health-update', health)
           },
         })
 
@@ -678,6 +655,11 @@ export default defineComponent({
     startEval() {
       if (!this.engine || !this.renderer) return
 
+      // Stop fast training if it was active (worker runs independently)
+      if (this.trainingLoop) {
+        this.trainingLoop.setFastMode(false)
+      }
+
       // Initialize training loop if not already (we need the agent for eval)
       if (!this.trainingLoop && this.engine) {
         this.trainingLoop = new TrainingLoop(this.engine as GameEngine, {
@@ -701,10 +683,13 @@ export default defineComponent({
 
       this.lastFrameTime = performance.now()
       this.lastMetricsTime = performance.now()
-      this.runEvalLoop()
+      // Use $nextTick to ensure mode prop has updated before starting the loop
+      this.$nextTick(() => this.runEvalLoop())
     },
 
     runEvalLoop() {
+      // Guard: only run if we're in eval mode (prevents race with other loops)
+      if (this.mode !== 'eval') return
       if (!this.isRunning || !this.trainingLoop || !this.renderer || !this.engine) return
       if (this.internalPaused) {
         this.animationId = requestAnimationFrame(() => this.runEvalLoop())
@@ -739,25 +724,20 @@ export default defineComponent({
           this.$emit('score-update', result.info.score)
         }
 
+        // Emit network visualization for this step (before potential reset)
+        const viz = agent.getNetworkVisualization(observation)
+        this.$emit('network-update', viz)
+
         if (result.done) {
           this.$emit('episode-end', {
             score: result.info.score,
             reward: 0,
           })
-          this.gameOver = true
-          return
+          // Auto-restart eval
+          this.engine.reset()
+          this.renderer?.resetFloor()
+          this.lastScore = 0
         }
-      }
-
-      // Update UI at game FPS to match game steps
-      if (now - this.lastMetricsTime >= GameConfig.FRAME_TIME) {
-        // Get REAL activations from the network
-        const agent = this.trainingLoop.getAgent()
-        if (agent && this.lastEvalObservation.length > 0) {
-          const viz = agent.getNetworkVisualization(this.lastEvalObservation)
-          this.$emit('network-update', viz)
-        }
-        this.lastMetricsTime = now
       }
 
       // Render

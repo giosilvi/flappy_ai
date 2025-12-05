@@ -3,11 +3,16 @@
     <div class="panel-header">
       <span>Neural Network</span>
       <span class="header-info">{{ networkInfo }}</span>
-      <span class="expand-hint">🔍</span>
+    </div>
+
+    <!-- Fast mode placeholder for SVG -->
+    <div v-if="fastMode" class="svg-placeholder">
+      <span class="placeholder-icon">⚡</span>
+      <span class="placeholder-text">Visualization paused</span>
     </div>
 
     <!-- Dynamic Network Diagram -->
-    <svg class="network-svg" :viewBox="`0 0 ${svgWidth} 200`" preserveAspectRatio="xMidYMid meet">
+    <svg v-else class="network-svg" :viewBox="`0 0 ${svgWidth} 200`" preserveAspectRatio="xMidYMid meet">
       <!-- Layer labels -->
       <text :x="layerPositions[0]" y="15" class="layer-label" text-anchor="middle">Input</text>
       <text 
@@ -101,34 +106,41 @@
       </g>
     </svg>
 
-    <!-- Action Decision -->
-    <div class="action-decision">
-      <div class="decision-arrow" :class="{ 'flap': selectedAction === 1 }">
-        {{ selectedAction === 0 ? '→ Idle' : '↑ Flap!' }}
+    <!-- Weight Health Indicator -->
+    <div 
+      class="weight-health" 
+      v-if="weightHealthStatus.status !== 'idle'"
+      title="Weight Health shows how the neural network weights are changing during training.&#10;&#10;Status:&#10;• Learning - Weights are being updated normally&#10;• Converging - Weight updates are decreasing (approaching optimum)&#10;• Exploring - Weight updates are increasing (finding new solutions)&#10;• Plateau - Weights barely changing (may be stuck)&#10;• Unstable - Weights oscillating (learning rate may be too high)&#10;&#10;Δ Rate: Magnitude of weight changes per second&#10;Stability: How consistent the update direction is (5 = stable)"
+    >
+      <div class="health-header">
+        <span class="health-label">Weight Health</span>
+        <span class="health-status" :class="weightHealthStatus.status">{{ weightHealthStatus.statusText }}</span>
       </div>
-    </div>
-
-    <!-- Q-values display -->
-    <div class="q-values">
-      <div class="q-value" :class="{ selected: selectedAction === 0 }">
-        <span class="q-label">Idle (no action)</span>
-        <span class="q-number" :class="{ positive: qValues[0] > 0, negative: qValues[0] < 0 }">
-          {{ formatQValue(qValues[0]) }}
-        </span>
+      <div class="health-metrics">
+        <div class="health-metric">
+          <span class="metric-label">Δ Rate</span>
+          <div class="delta-bar">
+            <div class="delta-fill" :style="{ width: `${Math.min(100, weightHealthStatus.deltaRate * 1000)}%` }"></div>
+          </div>
+          <span class="metric-value">{{ weightHealthStatus.deltaRate.toExponential(1) }}</span>
+        </div>
+        <div class="health-metric">
+          <span class="metric-label">Stability</span>
+          <div class="stability-dots">
+            <span v-for="i in 5" :key="i" class="stability-dot" :class="{ filled: i <= weightHealthStatus.stability }">●</span>
+          </div>
+        </div>
       </div>
-      <div class="q-value" :class="{ selected: selectedAction === 1 }">
-        <span class="q-label">Flap (jump)</span>
-        <span class="q-number" :class="{ positive: qValues[1] > 0, negative: qValues[1] < 0 }">
-          {{ formatQValue(qValues[1]) }}
-        </span>
-      </div>
-    </div>
-
-    <!-- Input Values Table -->
-    <div class="input-values">
-      <div class="input-row" v-for="(label, i) in inputLabels" :key="i">
-        <span class="input-name">{{ label }}</span>
-        <span class="input-val">{{ formatInputValue(i) }}</span>
+      <div class="delta-sparkline">
+        <svg class="sparkline-svg" viewBox="0 0 100 20" preserveAspectRatio="none">
+          <polyline 
+            :points="sparklinePoints" 
+            fill="none" 
+            :stroke="sparklineColor" 
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          />
+        </svg>
       </div>
     </div>
   </div>
@@ -158,11 +170,23 @@ export default defineComponent({
       type: Array as PropType<number[]>,
       default: () => [64, 64],
     },
+    weightHealth: {
+      type: Object as PropType<{ delta: number; avgSign: number } | null>,
+      default: null,
+    },
+    fastMode: {
+      type: Boolean,
+      default: false,
+    },
   },
   data() {
     return {
       inputLabels: INPUT_LABELS,
       displayNodes: 5, // Max nodes to show visually per layer
+      // Weight health tracking (pre-computed metrics received from props)
+      deltaHistory: [] as number[], // Last N delta values
+      signHistory: [] as number[], // Track avgSign for oscillation detection
+      maxDeltaHistory: 20,
     }
   },
   watch: {
@@ -172,6 +196,22 @@ export default defineComponent({
         this.saveNetworkData()
       },
       deep: true,
+    },
+    // Track weight health updates (pre-computed metrics)
+    weightHealth: {
+      handler(health: { delta: number; avgSign: number } | null) {
+        if (!health) return
+        
+        this.deltaHistory.push(health.delta)
+        if (this.deltaHistory.length > this.maxDeltaHistory) {
+          this.deltaHistory.shift()
+        }
+        
+        this.signHistory.push(health.avgSign)
+        if (this.signHistory.length > this.maxDeltaHistory) {
+          this.signHistory.shift()
+        }
+      },
     },
   },
   computed: {
@@ -197,6 +237,77 @@ export default defineComponent({
       const numLayers = this.allLayers.length
       const spacing = (this.svgWidth - 80) / (numLayers - 1)
       return this.allLayers.map((_, i) => 40 + i * spacing)
+    },
+    // Weight health computed properties (renamed to avoid conflict with prop)
+    weightHealthStatus(): { status: string; statusText: string; deltaRate: number; stability: number } {
+      if (this.deltaHistory.length < 2) {
+        return { status: 'idle', statusText: 'Waiting...', deltaRate: 0, stability: 5 }
+      }
+      
+      const recentDelta = this.deltaHistory[this.deltaHistory.length - 1]
+      const avgDelta = this.deltaHistory.reduce((a, b) => a + b, 0) / this.deltaHistory.length
+      
+      // Compute trend (are deltas increasing or decreasing?)
+      const halfLen = Math.floor(this.deltaHistory.length / 2)
+      const recentHalf = this.deltaHistory.slice(-halfLen)
+      const olderHalf = this.deltaHistory.slice(0, halfLen)
+      const recentAvg = recentHalf.reduce((a, b) => a + b, 0) / recentHalf.length
+      const olderAvg = olderHalf.length > 0 ? olderHalf.reduce((a, b) => a + b, 0) / olderHalf.length : recentAvg
+      
+      // Compute oscillation (sign changes in weight directions)
+      let signFlips = 0
+      for (let i = 1; i < this.signHistory.length; i++) {
+        if (Math.sign(this.signHistory[i]) !== Math.sign(this.signHistory[i-1]) && 
+            Math.abs(this.signHistory[i]) > 0.1 && Math.abs(this.signHistory[i-1]) > 0.1) {
+          signFlips++
+        }
+      }
+      const oscillationRate = this.signHistory.length > 1 ? signFlips / (this.signHistory.length - 1) : 0
+      
+      // Determine status
+      let status: string
+      let statusText: string
+      
+      if (avgDelta < 1e-6) {
+        status = 'plateau'
+        statusText = '⏸ Plateau'
+      } else if (oscillationRate > 0.5) {
+        status = 'unstable'
+        statusText = '⚠ Unstable'
+      } else if (recentAvg < olderAvg * 0.7) {
+        status = 'converging'
+        statusText = '✓ Converging'
+      } else if (recentAvg > olderAvg * 1.3) {
+        status = 'diverging'
+        statusText = '↗ Exploring'
+      } else {
+        status = 'learning'
+        statusText = '◉ Learning'
+      }
+      
+      // Stability: 5 = very stable, 1 = very unstable
+      const stability = Math.max(1, Math.min(5, Math.round(5 - oscillationRate * 8)))
+      
+      return { status, statusText, deltaRate: recentDelta, stability }
+    },
+    sparklinePoints(): string {
+      if (this.deltaHistory.length < 2) return '0,10 100,10'
+      
+      const max = Math.max(...this.deltaHistory, 1e-10)
+      const points = this.deltaHistory.map((d, i) => {
+        const x = (i / (this.deltaHistory.length - 1)) * 100
+        const y = 18 - (d / max) * 16 // Leave some padding
+        return `${x},${y}`
+      })
+      return points.join(' ')
+    },
+    sparklineColor(): string {
+      const status = this.weightHealthStatus.status
+      if (status === 'converging') return '#00ff88'
+      if (status === 'unstable') return '#ff5252'
+      if (status === 'plateau') return '#ffb74d'
+      if (status === 'diverging') return '#00d9ff'
+      return '#aaa'
     },
   },
   methods: {
@@ -244,20 +355,6 @@ export default defineComponent({
         const intensity = Math.floor(-normalized * 200)
         return `rgb(${255}, ${150 - intensity}, ${100})`
       }
-    },
-    formatQValue(value: number): string {
-      if (value === 0) return '0'
-      if (Math.abs(value) < 0.001) {
-        return value.toExponential(2)
-      }
-      if (Math.abs(value) >= 1000) {
-        return value.toExponential(2)
-      }
-      return value.toFixed(3)
-    },
-    formatInputValue(index: number): string {
-      const value = this.inputValues[index] || 0
-      return value.toFixed(2)
     },
     openDetailView() {
       // Save current network data to localStorage for the detail view (force save)
@@ -331,22 +428,39 @@ export default defineComponent({
   color: var(--color-text-muted);
 }
 
-.expand-hint {
-  font-size: 0.9rem;
-  opacity: 0.5;
-  transition: all 0.2s ease;
-}
 
-.network-viewer:hover .expand-hint {
-  opacity: 1;
-  transform: scale(1.2);
-}
+
+
 
 .network-svg {
   width: 100%;
   height: 180px;
   background: var(--color-bg-light);
   border-radius: var(--radius-md);
+}
+
+.svg-placeholder {
+  width: 100%;
+  height: 180px;
+  background: var(--color-bg-light);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-xs);
+}
+
+.svg-placeholder .placeholder-icon {
+  font-size: 1.5rem;
+  opacity: 0.6;
+}
+
+.svg-placeholder .placeholder-text {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
 }
 
 .layer-label {
@@ -372,91 +486,121 @@ export default defineComponent({
   fill: var(--color-text);
 }
 
-.action-decision {
-  display: flex;
-  justify-content: center;
-  padding: var(--spacing-xs);
-}
-
-.decision-arrow {
-  font-family: var(--font-display);
-  font-size: 1rem;
-  color: var(--color-primary);
-  padding: var(--spacing-xs) var(--spacing-md);
-  background: var(--color-bg-light);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-}
-
-.decision-arrow.flap {
-  color: var(--color-accent);
-  border-color: var(--color-accent);
-}
-
-.q-values {
-  display: flex;
-  gap: var(--spacing-sm);
-}
-
-.q-value {
-  flex: 1;
+/* Weight Health Indicator */
+.weight-health {
   padding: var(--spacing-sm);
   background: var(--color-bg-light);
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
-  transition: all 0.15s ease;
 }
 
-.q-value.selected {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 10px rgba(0, 217, 255, 0.2);
+.health-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-xs);
 }
 
-.q-label {
-  display: block;
+.health-label {
   font-family: var(--font-display);
   font-size: 0.65rem;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  margin-bottom: 2px;
 }
 
-.q-number {
-  font-family: var(--font-mono);
-  font-size: 1rem;
-  color: var(--color-text);
-}
-
-.q-number.positive {
-  color: var(--color-success);
-}
-
-.q-number.negative {
-  color: var(--color-danger);
-}
-
-.input-values {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm);
-  background: var(--color-bg-light);
+.health-status {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  padding: 2px 6px;
   border-radius: var(--radius-sm);
 }
 
-.input-row {
+.health-status.learning {
+  color: #aaa;
+  background: rgba(170, 170, 170, 0.2);
+}
+
+.health-status.converging {
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.2);
+}
+
+.health-status.plateau {
+  color: #ffb74d;
+  background: rgba(255, 183, 77, 0.2);
+}
+
+.health-status.unstable {
+  color: #ff5252;
+  background: rgba(255, 82, 82, 0.2);
+}
+
+.health-status.diverging {
+  color: #00d9ff;
+  background: rgba(0, 217, 255, 0.2);
+}
+
+.health-metrics {
   display: flex;
-  justify-content: space-between;
-  font-size: 0.7rem;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
 }
 
-.input-name {
-  font-family: var(--font-mono);
+.health-metric {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.health-metric .metric-label {
+  font-size: 0.6rem;
   color: var(--color-text-muted);
+  text-transform: uppercase;
 }
 
-.input-val {
+.health-metric .metric-value {
   font-family: var(--font-mono);
+  font-size: 0.65rem;
   color: var(--color-text);
+}
+
+.delta-bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.delta-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00d9ff, #00ff88);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.stability-dots {
+  display: flex;
+  gap: 2px;
+}
+
+.stability-dot {
+  font-size: 0.5rem;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.stability-dot.filled {
+  color: #00ff88;
+}
+
+.delta-sparkline {
+  margin-top: var(--spacing-xs);
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
 }
 </style>

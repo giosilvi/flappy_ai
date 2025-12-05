@@ -5,15 +5,10 @@
 
 import { GameEngine, type RewardConfig, type StepResult } from '@/game'
 import { WorkerDQNAgent, type DQNConfig } from './WorkerDQNAgent'
-import type { TrainingMetrics } from './types'
+import type { TrainingMetrics, AutoEvalResult } from './types'
 
-export interface AutoEvalResult {
-  avgScore: number
-  maxScore: number
-  minScore: number
-  scores: number[]
-  episode: number
-}
+// Re-export for convenience
+export type { AutoEvalResult }
 
 export interface TrainingCallbacks {
   onStep?: (metrics: TrainingMetrics, qValues: number[]) => void
@@ -21,6 +16,7 @@ export interface TrainingCallbacks {
   onTrainingStart?: () => void
   onTrainingStop?: () => void
   onAutoEvalResult?: (result: AutoEvalResult) => void
+  onWeightHealth?: (health: { delta: number; avgSign: number }) => void
 }
 
 // Must match WARMUP_SIZE in training.worker.ts
@@ -86,6 +82,11 @@ export class TrainingLoop {
     // Listen for auto-eval results
     this.agent.onAutoEvalResult((result) => {
       this.callbacks.onAutoEvalResult?.(result)
+    })
+
+    // Listen for weight health updates (from worker fast mode)
+    this.agent.onWeightHealth((health) => {
+      this.callbacks.onWeightHealth?.(health)
     })
 
     this.initialized = true
@@ -429,6 +430,14 @@ export class TrainingLoop {
    */
   getAgent(): WorkerDQNAgent | null {
     return this.agent
+  }
+
+  /**
+   * Get current network weights for visualization
+   */
+  getWeights(): { weights: number[][][]; biases: number[][] } | null {
+    if (!this.agent) return null
+    return this.agent.save()
   }
 
   /**

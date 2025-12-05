@@ -51,14 +51,7 @@
 
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue'
-
-interface AutoEvalResult {
-  avgScore: number
-  maxScore: number
-  minScore: number
-  scores: number[]
-  episode: number
-}
+import type { AutoEvalResult } from '@/rl/types'
 
 export default defineComponent({
   name: 'StatusBar',
