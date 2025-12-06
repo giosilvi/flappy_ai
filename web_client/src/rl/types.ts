@@ -71,6 +71,7 @@ export interface AutoEvalResult {
   scores: number[]
   episode: number              // Episode at which eval was run
   numTrials?: number           // Number of eval trials (optional)
+  isAutoEval?: boolean         // True when result came from auto-eval
 }
 
 /**

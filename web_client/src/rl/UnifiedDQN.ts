@@ -32,6 +32,7 @@ type WorkerMessage =
   | { type: 'setGamma'; value: number }
   | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
   | { type: 'reset' }
+  | { type: 'setAutoEval'; enabled: boolean; trials?: number; interval?: number }
 
 type WorkerResponse =
   | { type: 'ready'; backend: BackendType }
@@ -206,6 +207,13 @@ export class UnifiedDQN {
   }
 
   /**
+   * Configure auto-eval
+   */
+  setAutoEval(enabled: boolean, trials?: number, interval?: number): void {
+    this.postMessage({ type: 'setAutoEval', enabled, trials, interval })
+  }
+
+  /**
    * Set the number of parallel game instances
    * Valid values: 1, 4, 16, 64, 256, 1024
    */
@@ -278,7 +286,8 @@ export class UnifiedDQN {
 
     this.mode = 'autoEval'
     this.callbacks.onModeChange?.('autoEval')
-    this.postMessage({ type: 'startEval', numEnvs: 100, autoRestart: true })
+    const autoEvalEnvs = Math.min(this.config.numInstances ?? 64, 64)
+    this.postMessage({ type: 'startEval', numEnvs: autoEvalEnvs, autoRestart: true })
   }
 
   /**

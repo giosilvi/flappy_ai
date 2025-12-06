@@ -137,8 +137,8 @@
           />
         </div>
 
-        <!-- Eval Stats Overlay (shown only when all instances complete) -->
-        <div v-if="mode === 'eval' && evalComplete" class="game-overlay eval-overlay">
+        <!-- Eval Stats Overlay (shown only when manual eval completes) -->
+        <div v-if="mode === 'eval' && evalComplete && !autoEvalActive" class="game-overlay eval-overlay">
           <div class="eval-stats-panel">
             <h3 class="eval-title">🎯 Evaluation Complete</h3>
             <p class="eval-subtitle">{{ evalTargetInstances }} instance{{ evalTargetInstances > 1 ? 's' : '' }} evaluated with ε=0</p>
@@ -165,6 +165,28 @@
             <button class="btn btn-primary eval-restart-btn" @click="restartEval">
               🔄 Run Again
             </button>
+          </div>
+        </div>
+
+        <!-- Auto-eval toast (shows briefly when auto-eval completes during training) -->
+        <div v-if="autoEvalToastVisible" class="game-overlay eval-overlay auto-eval-toast">
+          <div class="eval-stats-panel">
+            <h3 class="eval-title">🎯 Auto-eval Complete</h3>
+            <p class="eval-subtitle">{{ lastAutoEvalResult?.scores?.length || 0 }} trials at episode {{ lastAutoEvalResult?.episode || 0 }}</p>
+            <div class="eval-results-grid" v-if="lastAutoEvalResult">
+              <div class="eval-stat-box">
+                <span class="stat-number">{{ lastAutoEvalResult.minScore }}</span>
+                <span class="stat-label">Min</span>
+              </div>
+              <div class="eval-stat-box highlight">
+                <span class="stat-number">{{ lastAutoEvalResult.avgScore.toFixed(1) }}</span>
+                <span class="stat-label">Avg</span>
+              </div>
+              <div class="eval-stat-box best">
+                <span class="stat-number">{{ lastAutoEvalResult.maxScore }}</span>
+                <span class="stat-label">Max</span>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -258,7 +280,7 @@ import LeaderboardPanel from './components/LeaderboardPanel.vue'
 import { apiClient, calculateAdjustedScore } from './services/apiClient'
 import { getAvailableBackends } from './rl/backendUtils'
 import type { BackendType } from './rl/backendUtils'
-import type { TrainingMetrics } from './rl/types'
+import type { TrainingMetrics, AutoEvalResult } from './rl/types'
 
 export type GameMode = 'idle' | 'configuring' | 'training' | 'eval' | 'manual'
 
@@ -306,13 +328,18 @@ export default defineComponent({
       isAutoEval: false,
       autoEvalTrial: 0,
       autoEvalTrials: 100,
-      lastAutoEvalResult: null as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number } | null,
+      lastAutoEvalResult: null as AutoEvalResult | null,
       autoEvalHistory: [] as { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }[],
+      autoEvalActive: false,
+      manualEvalActive: false,
+      prevModeBeforeAutoEval: 'training' as GameMode,
       evalStats: null as { min: number; max: number; avg: number; count: number } | null,
       evalScores: [] as number[],
       evalComplete: false,
       evalTargetInstances: 1,  // Number of instances when eval started (locked during eval)
       savedEpsilonBeforeEval: 0.3,  // Epsilon saved before entering eval mode
+      autoEvalToastVisible: false,
+      autoEvalToastTimer: null as number | null,
       hasModel: false,  // True when a model has been trained or loaded from checkpoint
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
@@ -371,6 +398,8 @@ export default defineComponent({
       this.lowestLeaderboardScore = await apiClient.getLowestScore()
     },
     startManualPlay() {
+      this.manualEvalActive = false
+      this.autoEvalActive = false
       this.mode = 'manual'
       this.showGameOver = false
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
@@ -401,6 +430,8 @@ export default defineComponent({
       }
     },
     openTrainingConfig() {
+      this.manualEvalActive = false
+      this.autoEvalActive = false
       this.mode = 'configuring'
       this.showGameOver = false
       this.isPaused = false
@@ -464,8 +495,26 @@ export default defineComponent({
       this.isAutoEval = metrics.isAutoEval ?? false
       this.autoEvalTrial = metrics.autoEvalTrial ?? 0
       this.autoEvalTrials = metrics.autoEvalTrials ?? 100
+
+      // Reflect auto-eval state in UI by temporarily switching to eval mode
+      const autoEvalRunning = this.isAutoEval
+      if (autoEvalRunning && !this.manualEvalActive) {
+        if (!this.autoEvalActive) {
+          this.autoEvalActive = true
+          this.prevModeBeforeAutoEval = this.mode
+          this.mode = 'eval'
+          this.isPaused = false
+          this.evalComplete = false
+        }
+      } else if (!autoEvalRunning && this.autoEvalActive) {
+        this.autoEvalActive = false
+        // Restore previous mode only if we switched because of auto-eval
+        if (!this.manualEvalActive) {
+          this.mode = this.prevModeBeforeAutoEval || 'training'
+        }
+      }
     },
-    handleAutoEvalResult(result: { avgScore: number; maxScore: number; minScore: number; scores: number[]; episode: number }) {
+    handleAutoEvalResult(result: AutoEvalResult) {
       console.log('[App] Auto-eval result:', result)
       this.lastAutoEvalResult = result
       this.lastGameScore = result.maxScore
@@ -475,6 +524,17 @@ export default defineComponent({
       }
       if (result.maxScore > this.bestScore) {
         this.bestScore = result.maxScore
+      }
+      // Show a short-lived overlay only for auto-eval completion (treat undefined as auto-eval to be safe)
+      if (result.isAutoEval !== false) {
+        this.autoEvalToastVisible = true
+        if (this.autoEvalToastTimer) {
+          clearTimeout(this.autoEvalToastTimer)
+        }
+        this.autoEvalToastTimer = window.setTimeout(() => {
+          this.autoEvalToastVisible = false
+          this.autoEvalToastTimer = null
+        }, 5000)
       }
       
       // For manual eval mode: Only update stats when eval is already complete
@@ -680,6 +740,8 @@ export default defineComponent({
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       
       if (newMode === 'eval') {
+        this.manualEvalActive = true
+        this.autoEvalActive = false
         // Save current epsilon before entering eval (to restore when returning to training)
         this.savedEpsilonBeforeEval = this.epsilon
         this.mode = 'eval'
@@ -705,6 +767,7 @@ export default defineComponent({
           }
         }
       } else if (newMode === 'training') {
+        this.manualEvalActive = false
         this.mode = 'training'
         this.isPaused = false
         this.showGameOver = false
@@ -721,6 +784,7 @@ export default defineComponent({
           }
         }
       } else if (newMode === 'manual') {
+        this.manualEvalActive = false
         this.mode = 'manual'
         this.showGameOver = false
         if (gameCanvas) {
@@ -729,6 +793,8 @@ export default defineComponent({
       }
     },
     resetTraining() {
+      this.manualEvalActive = false
+      this.autoEvalActive = false
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
         gameCanvas.resetTraining()
@@ -777,6 +843,8 @@ export default defineComponent({
     backToMenu() {
       this.showGameOver = false
       this.mode = 'idle'
+      this.manualEvalActive = false
+      this.autoEvalActive = false
       this.score = 0
       
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
@@ -786,6 +854,8 @@ export default defineComponent({
     },
     async backToTraining() {
       this.showGameOver = false
+      this.manualEvalActive = false
+      this.autoEvalActive = false
       this.mode = 'training'
       this.isPaused = false
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
@@ -977,6 +1047,17 @@ export default defineComponent({
 /* Eval Stats Overlay */
 .eval-overlay {
   background: rgba(15, 15, 35, 0.92);
+}
+
+.auto-eval-toast {
+  animation: fade-in-out 5s ease forwards;
+}
+
+@keyframes fade-in-out {
+  0% { opacity: 0; }
+  5% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .eval-stats-panel {

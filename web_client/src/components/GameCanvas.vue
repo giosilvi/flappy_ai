@@ -262,6 +262,8 @@ export default defineComponent({
           this.updateInstanceCount(desiredCount)
         }
         this.pendingNumInstances = null
+        // Ensure auto-eval uses current instance count (capped at 64)
+        this.unifiedDQN.setAutoEval(true, Math.min(this.numInstances, 64), 2500)
       }
       } finally {
         this.isInitializing = false
@@ -274,6 +276,7 @@ export default defineComponent({
         this.unifiedDQN.setNumInstances(count as 1 | 4 | 16 | 64 | 256 | 1024)
         this.unifiedDQN.setVisualization(count <= MAX_VISUALIZED_INSTANCES)
         this.unifiedDQN.setFrameLimit(this.frameLimit30)
+        this.unifiedDQN.setAutoEval(true, Math.min(count, 64))
       } else {
         // Defer applying until init completes
         this.pendingNumInstances = count

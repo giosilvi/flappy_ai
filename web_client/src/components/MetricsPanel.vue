@@ -69,10 +69,6 @@
         <span class="secondary-label">Avg Length</span>
         <span class="secondary-value">{{ avgLength.toFixed(0) }}</span>
       </div>
-      <div class="secondary-metric">
-        <span class="secondary-label">Eps/sec</span>
-        <span class="secondary-value text-success">{{ displayEpisodesPerSecond.toFixed(1) }}</span>
-      </div>
     </div>
 
     <!-- Combined Episode Rewards + Moving Average Chart -->
@@ -202,10 +198,6 @@ export default defineComponent({
       type: Number,
       default: 1,
     },
-    episodesPerSecond: {
-      type: Number,
-      default: 0,
-    },
   },
   data() {
     return {
@@ -222,33 +214,9 @@ export default defineComponent({
       pendingRewards: [] as number[],  // Buffer for smoothing rewards
       pendingLengths: [] as number[],  // Buffer for smoothing lengths
       movingAvgWindow: 50,  // Window size for moving average over interval data points
-      // Track eps/sec over 10 second window for accurate calculation
-      episodeTimestamps: [] as number[],  // Timestamps of recent episode completions
-      epsSecWindowMs: 10000,  // 10 second window
     }
   },
   computed: {
-    displayEpisodesPerSecond(): number {
-      // Calculate eps/sec from episode timestamps over 10 second window
-      if (this.episodeTimestamps.length < 2) {
-        return 0
-      }
-      const now = Date.now()
-      const windowStart = now - this.epsSecWindowMs
-      // Get timestamps within the window
-      const timestampsInWindow = this.episodeTimestamps.filter(t => t >= windowStart)
-      const episodesInWindow = timestampsInWindow.length
-      if (episodesInWindow < 2) {
-        return 0  // Need at least 2 episodes in window
-      }
-      // Calculate actual time span from first to last timestamp in window
-      const firstInWindow = timestampsInWindow[0]
-      const actualWindowMs = now - firstInWindow
-      if (actualWindowMs < 1000) {
-        return 0  // Need at least 1 second of data
-      }
-      return (episodesInWindow / actualWindowMs) * 1000
-    },
     avgRewardClass(): string {
       if (this.avgReward > 0) return 'text-success'
       if (this.avgReward < -0.5) return 'text-danger'
@@ -296,21 +264,12 @@ export default defineComponent({
         this.pendingRewards = []
         this.pendingLengths = []
         this.smoothingWindow = 10  // Reset smoothing window
-        this.episodeTimestamps = []  // Reset eps/sec tracking
         this.$nextTick(() => this.drawCharts())
         return
       }
       
       // Only add to history when episode changes
       if (newVal !== oldVal && newVal > 0) {
-        // Track episode completion timestamp for eps/sec calculation
-        const now = Date.now()
-        this.episodeTimestamps.push(now)
-        // Remove timestamps older than window
-        const cutoff = now - this.epsSecWindowMs
-        while (this.episodeTimestamps.length > 0 && this.episodeTimestamps[0] < cutoff) {
-          this.episodeTimestamps.shift()
-        }
         // Store interval average reward (average of episodes in last ~500ms)
         this.episodeRewardHistory.push(this.avgReward)
         if (this.episodeRewardHistory.length > this.maxHistoryLength) {

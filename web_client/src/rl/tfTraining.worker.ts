@@ -36,6 +36,7 @@ type WorkerMessage =
   | { type: 'setGamma'; value: number }
   | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
   | { type: 'reset' }
+  | { type: 'setAutoEval'; enabled: boolean; trials?: number; interval?: number }
 
 type WorkerResponse =
   | { type: 'ready'; backend: BackendType }
@@ -69,7 +70,7 @@ const FRAME_INTERVAL_MS = 1000 / 30
 
 // Auto-eval state
 let autoEvalEnabled = true  // Enabled by default
-let autoEvalInterval = 5000  // Run auto-eval every 5000 episodes
+let autoEvalInterval = 5000  // Default: run auto-eval every 5000 episodes
 let autoEvalTrials = 64      // Number of parallel eval instances (max 64)
 let isAutoEvalRunning = false
 let lastAutoEvalEpisode = 0
@@ -369,6 +370,7 @@ function finishEval(): void {
     scores: [...scores],
     episode: metricsCollector?.getMetrics().episode || 0,
     numTrials: scores.length,
+    isAutoEval: wasAutoEval,
   }
 
   // If this was auto-eval, restore training state
@@ -683,6 +685,20 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       case 'setRewardConfig':
         rewardConfig = { ...rewardConfig, ...msg.config }
         env?.setRewardConfig(msg.config)
+        break
+
+      case 'setAutoEval':
+        autoEvalEnabled = msg.enabled
+        if (typeof msg.interval === 'number' && msg.interval > 0) {
+          autoEvalInterval = msg.interval
+        }
+        if (typeof msg.trials === 'number' && msg.trials > 0) {
+          autoEvalTrials = Math.min(msg.trials, 64)
+        }
+        lastAutoEvalEpisode = 0  // Reset counter so next check uses new interval
+        console.log(
+          `[TFWorker] Auto-eval ${autoEvalEnabled ? 'enabled' : 'disabled'} (every ${autoEvalInterval} eps, ${autoEvalTrials} trials)`
+        )
         break
 
       case 'reset':
