@@ -426,8 +426,9 @@ export default defineComponent({
       this.unifiedDQN?.stopEval()
 
       // Sync training settings to worker (in case they were changed before starting)
+      // NOTE: setEpsilon is NOT called here - caller is responsible for setting epsilon
+      // before calling startTraining() to avoid race conditions with Vue prop updates
       this.unifiedDQN?.setAutoDecay(this.autoDecay)
-      this.unifiedDQN?.setEpsilon(this.epsilon)
       this.unifiedDQN?.setEpsilonDecaySteps(this.epsilonDecaySteps)
       this.unifiedDQN?.setLearningRate(this.learningRate)
 

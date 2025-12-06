@@ -503,6 +503,8 @@ export default defineComponent({
       this.hasModel = true
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
+        // Explicitly set epsilon before starting (avoids race condition with props)
+        gameCanvas.setEpsilon(this.epsilon)
         try {
           await gameCanvas.startTraining(hiddenLayers)
         } catch (error) {
@@ -897,6 +899,11 @@ export default defineComponent({
         if (gameCanvas) gameCanvas.startGame()
       } else {
         if (gameCanvas) {
+          // Restore epsilon if it was set to 0 (e.g., from eval mode)
+          if (this.epsilon === 0 && this.savedEpsilonBeforeEval > 0) {
+            this.epsilon = this.savedEpsilonBeforeEval
+            gameCanvas.setEpsilon(this.savedEpsilonBeforeEval)
+          }
           try {
             await gameCanvas.startTraining()
           } catch (error) {
@@ -925,6 +932,11 @@ export default defineComponent({
       this.isPaused = false
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
+        // Restore epsilon if it was set to 0 (e.g., from eval mode)
+        if (this.epsilon === 0 && this.savedEpsilonBeforeEval > 0) {
+          this.epsilon = this.savedEpsilonBeforeEval
+          gameCanvas.setEpsilon(this.savedEpsilonBeforeEval)
+        }
         try {
           await gameCanvas.startTraining()
         } catch (error) {
