@@ -1,5 +1,5 @@
 <template>
-  <div class="network-viewer panel" @click="openDetailView" title="Click to open full visualization">
+  <div class="network-viewer panel" @click="$emit('open-detail')" title="Click to open full visualization">
     <div class="panel-header">
       <span>Neural Network</span>
       <span class="header-info">{{ networkInfo }}</span>
@@ -81,27 +81,67 @@
         </g>
       </g>
 
-      <!-- Output nodes with live values -->
+      <!-- Output nodes with Q-values -->
       <g class="output-layer">
         <!-- Idle -->
         <g :transform="`translate(${layerPositions[layerPositions.length - 1]}, 75)`">
           <circle 
             r="12" 
-            :fill="selectedAction === 0 ? '#00d9ff' : '#2a4a5a'" 
-            :stroke="selectedAction === 0 ? '#00d9ff' : '#3d3d5a'" 
+            :fill="greedyAction === 0 ? '#00d9ff' : '#2a4a5a'" 
+            :stroke="greedyAction === 0 ? '#00d9ff' : '#3d3d5a'" 
             stroke-width="2"
           />
-          <text x="18" y="4" class="output-label">idle</text>
+          <text x="-16" y="4" class="output-label" text-anchor="end">idle</text>
         </g>
         <!-- Flap -->
         <g :transform="`translate(${layerPositions[layerPositions.length - 1]}, 115)`">
           <circle 
             r="12" 
-            :fill="selectedAction === 1 ? '#ff6b9d' : '#2a4a5a'" 
-            :stroke="selectedAction === 1 ? '#ff6b9d' : '#3d3d5a'" 
+            :fill="greedyAction === 1 ? '#ff6b9d' : '#2a4a5a'" 
+            :stroke="greedyAction === 1 ? '#ff6b9d' : '#3d3d5a'" 
             stroke-width="2"
           />
-          <text x="18" y="4" class="output-label">flap</text>
+          <text x="-16" y="4" class="output-label" text-anchor="end">flap</text>
+        </g>
+      </g>
+
+      <!-- Decision Section: Output + Random nodes → central decision -->
+      <g class="decision-section" :transform="`translate(${decisionX}, 0)`">
+        <!-- Lines from output nodes to decision node -->
+        <line 
+          :x1="layerPositions[layerPositions.length - 1] - decisionX + 12" :y1="75" 
+          x2="13" y2="95"
+          stroke="#00d9ff" :stroke-width="!isExploring && selectedAction === 0 ? 2 : 1" :opacity="!isExploring && selectedAction === 0 ? 0.9 : 0.15"
+        />
+        <line 
+          :x1="layerPositions[layerPositions.length - 1] - decisionX + 12" :y1="115" 
+          x2="13" y2="95"
+          stroke="#ff6b9d" :stroke-width="!isExploring && selectedAction === 1 ? 2 : 1" :opacity="!isExploring && selectedAction === 1 ? 0.9 : 0.15"
+        />
+        
+        <!-- Random source nodes (aligned with output nodes) -->
+        <circle cx="50" cy="75" r="7" fill="#ffcc00" stroke="#fff" stroke-width="1" 
+          :opacity="isExploring && selectedAction === 0 ? 1 : 0.35"/>
+        <circle cx="50" cy="115" r="7" fill="#ff8800" stroke="#fff" stroke-width="1" 
+          :opacity="isExploring && selectedAction === 1 ? 1 : 0.35"/>
+        <text x="50" y="138" class="source-label-small" text-anchor="middle">RNG</text>
+        
+        <!-- Lines from random nodes to decision node -->
+        <line x1="43" y1="75" x2="37" y2="95" stroke="#ffcc00" 
+          :stroke-width="isExploring && selectedAction === 0 ? 2 : 1" :opacity="isExploring && selectedAction === 0 ? 1 : 0.15"/>
+        <line x1="43" y1="115" x2="37" y2="95" stroke="#ff8800" 
+          :stroke-width="isExploring && selectedAction === 1 ? 2 : 1" :opacity="isExploring && selectedAction === 1 ? 1 : 0.15"/>
+        
+        <!-- Decision node (centered between output nodes) -->
+        <circle cx="25" cy="95" r="12" :fill="decisionNodeColor" stroke="#ffffff" stroke-width="2"/>
+        <text x="25" y="99" class="decision-text" text-anchor="middle">{{ selectedAction === 0 ? '→' : '↑' }}</text>
+        
+        <!-- Epsilon indicator bar -->
+        <g transform="translate(25, 155)">
+          <rect x="-20" y="-6" width="40" height="12" rx="6" fill="rgba(30, 40, 60, 0.8)" stroke="#3a4a5a"/>
+          <rect x="-20" y="-6" :width="20 * (1 - epsilon)" height="12" rx="6" fill="rgba(0, 180, 220, 0.5)"/>
+          <rect :x="20 - 20 * epsilon" y="-6" :width="20 * epsilon" height="12" rx="6" fill="rgba(255, 170, 0, 0.5)"/>
+          <text x="0" y="3" class="epsilon-label-small" text-anchor="middle">ε:{{ (epsilon * 100).toFixed(0) }}%</text>
         </g>
       </g>
     </svg>
@@ -153,6 +193,7 @@ const INPUT_LABELS = ['y', 'vel', 'dx₁', 'dy₁', 'dx₂', 'dy₂']
 
 export default defineComponent({
   name: 'NetworkViewer',
+  emits: ['open-detail'],
   props: {
     activations: {
       type: Array as PropType<number[][]>,
@@ -165,6 +206,18 @@ export default defineComponent({
     selectedAction: {
       type: Number,
       default: 0,
+    },
+    greedyAction: {
+      type: Number,
+      default: 0,
+    },
+    epsilon: {
+      type: Number,
+      default: 0,
+    },
+    isExploring: {
+      type: Boolean,
+      default: false,
     },
     hiddenLayers: {
       type: Array as PropType<number[]>,
@@ -190,13 +243,6 @@ export default defineComponent({
     }
   },
   watch: {
-    // Save network data when activations update (for the detail view)
-    activations: {
-      handler() {
-        this.saveNetworkData()
-      },
-      deep: true,
-    },
     // Track weight health updates (pre-computed metrics)
     weightHealth: {
       handler(health: { delta: number; avgSign: number } | null) {
@@ -227,16 +273,28 @@ export default defineComponent({
     allLayers(): number[] {
       return [6, ...this.hiddenLayers, 2]
     },
-    // Calculate SVG width based on number of layers
+    // Calculate SVG width based on number of layers (extra space for decision section)
     svgWidth(): number {
       const numLayers = this.allLayers.length
-      return 60 + numLayers * 70 // 60 padding + 70 per layer
+      return 50 + numLayers * 55 + 70 // 50 padding + 55 per layer + 70 for decision section
     },
     // Calculate X positions for each layer
     layerPositions(): number[] {
       const numLayers = this.allLayers.length
-      const spacing = (this.svgWidth - 80) / (numLayers - 1)
-      return this.allLayers.map((_, i) => 40 + i * spacing)
+      const spacing = (this.svgWidth - 140) / (numLayers - 1) // 140 = 70 base + 70 decision section
+      return this.allLayers.map((_, i) => 35 + i * spacing)
+    },
+    // X position for decision section
+    decisionX(): number {
+      return this.layerPositions[this.layerPositions.length - 1] + 35
+    },
+    // Decision node color based on source and action
+    decisionNodeColor(): string {
+      if (this.isExploring) {
+        return this.selectedAction === 0 ? '#ffcc00' : '#ff8800'
+      } else {
+        return this.selectedAction === 0 ? '#00d9ff' : '#ff6b9d'
+      }
     },
     // Weight health computed properties (renamed to avoid conflict with prop)
     weightHealthStatus(): { status: string; statusText: string; deltaRate: number; stability: number } {
@@ -357,41 +415,6 @@ export default defineComponent({
         return `rgb(${255}, ${150 - intensity}, ${100})`
       }
     },
-    openDetailView() {
-      // Save current network data to localStorage for the detail view (force save)
-      this.saveNetworkData()
-      console.log('[NetworkViewer] Opening detail view, saved data:', {
-        activations: this.activations?.length,
-        qValues: this.qValues,
-        hiddenLayers: this.hiddenLayers,
-      })
-      
-      // Open a new browser window with the network visualization
-      const width = 1400
-      const height = 800
-      const left = (window.screen.width - width) / 2
-      const top = (window.screen.height - height) / 2
-      
-      window.open(
-        '/network-detail.html',
-        'NetworkVisualization',
-        `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no,toolbar=no,menubar=no,location=no,status=no`
-      )
-    },
-    saveNetworkData() {
-      // Save network data to localStorage for the detail view to read
-      const data = {
-        activations: this.activations,
-        qValues: this.qValues,
-        selectedAction: this.selectedAction,
-        hiddenLayers: this.hiddenLayers,
-      }
-      try {
-        localStorage.setItem('flappy-ai-network-data', JSON.stringify(data))
-      } catch (e) {
-        console.warn('Failed to save network data to localStorage:', e)
-      }
-    },
   },
 })
 </script>
@@ -428,9 +451,6 @@ export default defineComponent({
   font-size: 0.7rem;
   color: var(--color-text-muted);
 }
-
-
-
 
 
 .network-svg {
@@ -485,6 +505,40 @@ export default defineComponent({
   font-family: var(--font-mono);
   font-size: 8px;
   fill: var(--color-text);
+}
+
+/* Decision section styles */
+.source-label {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  fill: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.source-label-small {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.epsilon-label-small {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  fill: #c0d0e0;
+}
+
+.decision-text {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: bold;
+  fill: #ffffff;
+}
+
+.epsilon-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--color-text-muted);
 }
 
 /* Weight Health Indicator */

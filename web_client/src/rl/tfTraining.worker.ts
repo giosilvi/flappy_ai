@@ -46,6 +46,7 @@ type WorkerResponse =
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'weightHealth'; data: WeightHealthMetrics }
   | { type: 'episodeEnd'; score: number; reward: number; length: number; envIndex: number }
+  | { type: 'network'; data: { input: number[]; qValues: number[]; selectedAction: number } }
   | { type: 'error'; message: string }
 
 // ===== Worker State =====
@@ -91,9 +92,11 @@ let bufferCapacity = DefaultTFDQNConfig.bufferSize
 // Timing
 let lastMetricsTime = 0
 let lastStatesTime = 0
+let lastNetworkVizTime = 0
 let previousWeights: number[][][] | null = null
 const METRICS_INTERVAL = 500  // Emit metrics every 500ms
 const STATES_INTERVAL = 33    // Emit states at ~30fps for visualization
+const NETWORK_VIZ_INTERVAL = 33  // Emit network viz at ~30fps
 const TRAIN_FREQ = 4          // Train every N steps
 const BATCH_SIZE = 64         // Training batch size
 
@@ -291,10 +294,16 @@ function runTrainingBatch(): void {
     lastMetricsTime = now
   }
 
-  // Emit game states for visualization
+  // Emit game states for visualization (throttled)
   if (visualize && numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
     emitGameStates()
     lastStatesTime = now
+  }
+
+  // Emit network viz for single instance (throttled to ~30fps)
+  if (visualize && numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+    emitNetworkViz()
+    lastNetworkVizTime = now
   }
 
   // Continue training loop
@@ -340,11 +349,17 @@ function runEvalBatch(): void {
     if (performance.now() - startTime > 30) break
   }
 
-  // Emit game states for visualization
+  // Emit game states for visualization (throttled)
   const now = performance.now()
   if (numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
     emitGameStates()
     lastStatesTime = now
+  }
+
+  // Emit network viz for single instance (throttled to ~30fps)
+  if (numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+    emitNetworkViz()
+    lastNetworkVizTime = now
   }
 
   // Continue eval loop
@@ -552,6 +567,48 @@ function emitWeightHealth(): void {
   self.postMessage({ type: 'weightHealth', data: health } as WorkerResponse)
 }
 
+/**
+ * Emit network visualization data (single instance only)
+ * Sends input, Q-values, and selected action for NetworkViewer
+ */
+function emitNetworkViz(): void {
+  if (!agent || !env || numEnvs !== 1) return
+
+  // Get current observation from first (only) environment
+  const observations = env.getObservations()
+  if (!observations || observations.length === 0) return
+
+  const state = observations[0]
+
+  // Get fresh Q-values for current state (not cached, since actBatch doesn't update lastQValues)
+  const qValues = agent.predictSingle(state)
+  const greedyAction = qValues[0] > qValues[1] ? 0 : 1
+
+  // Get current epsilon for exploration visualization
+  const epsilon = agent.getEpsilon()
+  
+  // Simulate exploration decision (same logic as actBatch)
+  // Note: This shows what *could* happen, not what actually happened
+  const exploreRoll = Math.random()
+  const isExploring = isTraining && exploreRoll < epsilon
+  const selectedAction = isExploring 
+    ? (Math.random() < 0.2 ? 1 : 0)  // Biased exploration
+    : greedyAction
+
+  // Send input, output, and exploration info
+  self.postMessage({
+    type: 'network',
+    data: { 
+      input: state, 
+      qValues, 
+      selectedAction,
+      greedyAction,
+      epsilon,
+      isExploring,
+    },
+  } as WorkerResponse)
+}
+
 // ===== Message Handler =====
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
@@ -591,6 +648,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         env.resetAll()
         lastMetricsTime = performance.now()
         lastStatesTime = performance.now()
+        lastNetworkVizTime = 0  // Reset to trigger immediate emit
         runTrainingBatch()
         break
 

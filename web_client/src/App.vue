@@ -90,9 +90,13 @@
           :activations="networkActivations"
           :qValues="qValues"
           :selectedAction="selectedAction"
+          :greedyAction="greedyAction"
+          :epsilon="networkEpsilon"
+          :isExploring="isExploring"
           :hiddenLayers="hiddenLayersConfig"
           :weightHealth="weightHealth"
           :fastMode="numInstances > 1"
+          @open-detail="showNetworkDetail = true"
         />
       </aside>
 
@@ -264,6 +268,22 @@
       @close="showLeaderboard = false"
       @submit="handleScoreSubmitted"
     />
+
+    <!-- Network Detail Panel (in-window modal for best performance) -->
+    <NetworkDetailPanel
+      v-if="showNetworkDetail"
+      :input="networkActivations[0] || []"
+      :qValues="qValues"
+      :selectedAction="selectedAction"
+      :greedyAction="greedyAction"
+      :epsilon="networkEpsilon"
+      :isExploring="isExploring"
+      :hiddenLayers="hiddenLayersConfig"
+      :isPaused="isPaused"
+      @close="showNetworkDetail = false"
+      @toggle-pause="togglePause"
+      @update-epsilon="updateEpsilon"
+    />
   </div>
 </template>
 
@@ -274,6 +294,7 @@ import StatusBar from './components/StatusBar.vue'
 import MetricsPanel from './components/MetricsPanel.vue'
 import ControlPanel from './components/ControlPanel.vue'
 import NetworkViewer from './components/NetworkViewer.vue'
+import NetworkDetailPanel from './components/NetworkDetailPanel.vue'
 import NetworkConfig from './components/NetworkConfig.vue'
 import Leaderboard from './components/Leaderboard.vue'
 import LeaderboardPanel from './components/LeaderboardPanel.vue'
@@ -292,6 +313,7 @@ export default defineComponent({
     MetricsPanel,
     ControlPanel,
     NetworkViewer,
+    NetworkDetailPanel,
     NetworkConfig,
     Leaderboard,
     LeaderboardPanel,
@@ -344,15 +366,18 @@ export default defineComponent({
       networkActivations: [] as number[][],
       qValues: [0, 0] as [number, number],
       selectedAction: 0,
+      greedyAction: 0,
+      networkEpsilon: 0,  // Epsilon for network viz (separate from control epsilon)
+      isExploring: false,
       weightHealth: null as { delta: number; avgSign: number } | null,
       isPaused: false,
       showGameOver: false,
+      showNetworkDetail: false,
       lastGameScore: 0,
       showLeaderboard: false,
       hiddenLayersConfig: [64, 64] as number[],
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,
-      _loggedNetworkSave: false,
     }
   },
   computed: {
@@ -537,26 +562,36 @@ export default defineComponent({
         }, 5000)
       }
       
-      // For manual eval mode: Only update stats when eval is already complete
-      // (completion is tracked by recordEvalScore via individual episodeEnd events)
-      // This prevents stale auto-eval results from training mode from prematurely 
-      // marking manual eval as complete
-      if (this.mode === 'eval' && this.evalComplete) {
-        // Merge counts safely: prefer existing evalScores if we already collected more
+      // Update eval stats as soon as results arrive (even if episodeEnd events lag behind)
+      // This ensures UI completes when worker finishes, instead of waiting for both signals
+      if (this.mode === 'eval') {
+        // Merge counts safely: prefer the larger set between worker result and collected scores
         const finalScores = result.scores.length >= this.evalScores.length
           ? result.scores
           : this.evalScores
 
-        // Only override evalScores if the incoming result has at least as many scores
+        // Keep the longest source of truth
         if (result.scores.length >= this.evalScores.length) {
           this.evalScores = result.scores
         }
 
+        const minScore = finalScores.length ? Math.min(...finalScores) : 0
+        const maxScore = finalScores.length ? Math.max(...finalScores) : 0
+        const avgScore = finalScores.length
+          ? finalScores.reduce((sum, v) => sum + v, 0) / finalScores.length
+          : 0
+
         this.evalStats = {
-          min: result.minScore,
-          max: result.maxScore,
-          avg: result.avgScore,
+          min: minScore,
+          max: maxScore,
+          avg: avgScore,
           count: finalScores.length,
+        }
+
+        // Mark complete when we have enough scores from the worker result
+        const expected = this.evalTargetInstances || result.numTrials || finalScores.length
+        if (finalScores.length >= expected) {
+          this.evalComplete = true
         }
       }
     },
@@ -572,28 +607,22 @@ export default defineComponent({
       this.backend = backend
       console.log('[App] Backend ready:', backend)
     },
-    handleNetworkUpdate(viz: { activations: number[][]; qValues: number[]; selectedAction: number }) {
-      this.networkActivations = viz.activations
+    handleNetworkUpdate(viz: { input: number[]; qValues: number[]; selectedAction: number; greedyAction: number; epsilon: number; isExploring: boolean }) {
+      // Build activations array for NetworkViewer: [input, ...emptyHiddenLayers, output]
+      const hiddenLayers = this.hiddenLayersConfig || [64, 64]
+      this.networkActivations = [
+        viz.input,
+        ...hiddenLayers.map(() => []),
+        viz.qValues,
+      ]
       if (viz.qValues && viz.qValues.length === 2) {
         this.qValues = [viz.qValues[0], viz.qValues[1]] as [number, number]
         this.selectedAction = viz.selectedAction
+        this.greedyAction = viz.greedyAction
+        this.networkEpsilon = viz.epsilon
+        this.isExploring = viz.isExploring
       }
-      
-      try {
-        const dataToSave = {
-          activations: this.networkActivations,
-          qValues: this.qValues,
-          selectedAction: this.selectedAction,
-          hiddenLayers: this.hiddenLayersConfig,
-        }
-        localStorage.setItem('flappy-ai-network-data', JSON.stringify(dataToSave))
-        if (!this._loggedNetworkSave) {
-          console.log('[App] Network data saved to localStorage')
-          this._loggedNetworkSave = true
-        }
-      } catch (e) {
-        console.warn('[App] Failed to save network data:', e)
-      }
+      // No localStorage needed - data flows via Vue props to NetworkDetailPanel
     },
     handleWeightHealthUpdate(health: any) {
       // Normalize worker payload to the NetworkViewer shape
@@ -810,7 +839,7 @@ export default defineComponent({
       this.totalSteps = 0
       this.avgLength = 0
       this.episodeLength = 0
-      this.epsilon = 1.0
+      this.epsilon = 0.5
       this.autoDecay = true
       this.isWarmup = true
       this.isAutoEval = false

@@ -42,6 +42,7 @@ type WorkerResponse =
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'weightHealth'; data: WeightHealthMetrics }
   | { type: 'episodeEnd'; score: number; reward: number; length: number; envIndex: number }
+  | { type: 'network'; data: { input: number[]; qValues: number[]; selectedAction: number; greedyAction: number; epsilon: number; isExploring: boolean } }
   | { type: 'error'; message: string }
 
 export type UnifiedDQNMode = 'idle' | 'training' | 'eval' | 'autoEval'
@@ -52,6 +53,7 @@ export interface UnifiedDQNCallbacks {
   onAutoEvalResult?: (result: AutoEvalResult) => void
   onWeightHealth?: (health: WeightHealthMetrics) => void
   onEpisodeEnd?: (stats: { score: number; reward: number; length: number; envIndex: number }) => void
+  onNetwork?: (data: { input: number[]; qValues: number[]; selectedAction: number; greedyAction: number; epsilon: number; isExploring: boolean }) => void
   onReady?: (backend: BackendType) => void
   onError?: (message: string) => void
   onModeChange?: (mode: UnifiedDQNMode) => void
@@ -180,6 +182,10 @@ export class UnifiedDQN {
           length: msg.length,
           envIndex: msg.envIndex,
         })
+        break
+
+      case 'network':
+        this.callbacks.onNetwork?.(msg.data)
         break
 
       case 'error':

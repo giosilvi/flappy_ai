@@ -180,22 +180,19 @@ export default defineComponent({
     },
 
     async initUnifiedDQN(hiddenLayersOverride?: number[]) {
-      // Prevent concurrent initialization calls (race condition guard)
+      const desiredLayers = hiddenLayersOverride ? hiddenLayersOverride : this.hiddenLayersConfig
+
+      // Wait for any in-flight initialization to finish before proceeding
       if (this.isInitializing) {
         console.log('[GameCanvas] initUnifiedDQN already in progress, waiting...')
-        // Wait for current initialization to complete
-        while (this.isInitializing) {
-          await new Promise(resolve => setTimeout(resolve, 50))
-        }
+      }
+      while (this.isInitializing) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
 
-        // If an instance now exists with the same architecture, skip redundant re-init
-        const desiredLayers = hiddenLayersOverride ? hiddenLayersOverride : this.hiddenLayersConfig
-        if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers)) {
-          // Ensure flag is not left set from any prior attempt
-          this.isInitializing = false
-          return
-        }
-        // Otherwise proceed to re-init with the new desired architecture
+      // If an instance now exists with the same architecture, skip redundant re-init
+      if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers)) {
+        return
       }
       
       this.isInitializing = true
@@ -206,7 +203,7 @@ export default defineComponent({
           this.unifiedDQN = null
         }
 
-        const hiddenLayers = hiddenLayersOverride ? [...hiddenLayersOverride] : [...this.hiddenLayersConfig]
+        const hiddenLayers = [...desiredLayers]
         this.lastInitHiddenLayers = [...hiddenLayers]
 
         // Capture the current instance count at init start
@@ -242,6 +239,12 @@ export default defineComponent({
         },
         onWeightHealth: (health) => {
           this.$emit('weight-health-update', health)
+        },
+        onNetwork: (data) => {
+          // Only emit for single instance (viz disabled for multi-instance)
+          if (this.numInstances === 1) {
+            this.$emit('network-update', data)
+          }
         },
         onEpisodeEnd: (stats) => {
           this.$emit('episode-end', {
