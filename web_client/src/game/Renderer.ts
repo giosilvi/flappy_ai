@@ -1,20 +1,19 @@
 /**
- * Game renderer - draws sprites to canvas
+ * Game renderer - draws sprites to canvas (single instance)
  */
 
 import { GameConfig } from './config'
 import type { RawGameState } from './GameState'
-
-interface SpriteSet {
-  background: HTMLImageElement
-  floor: HTMLImageElement
-  bird: HTMLImageElement[]
-  pipeUp: HTMLImageElement
-  pipeDown: HTMLImageElement
-  digits: HTMLImageElement[]
-  gameOver: HTMLImageElement
-  message: HTMLImageElement
-}
+import {
+  SpriteSet,
+  loadAllSprites,
+  drawRewardIndicator,
+  drawScore as drawSharedScore,
+  drawPipes as drawSharedPipes,
+  drawFloor as drawSharedFloor,
+  drawBird as drawSharedBird,
+  drawGameOver as drawSharedGameOver,
+} from './renderShared'
 
 export class Renderer {
   private canvas: HTMLCanvasElement
@@ -32,7 +31,7 @@ export class Renderer {
     }
     this.ctx = ctx
 
-    // Set canvas size
+    // Set canvas to native game resolution - CSS handles display scaling
     this.canvas.width = GameConfig.WIDTH
     this.canvas.height = GameConfig.HEIGHT
 
@@ -44,59 +43,7 @@ export class Renderer {
    * Load all game sprites
    */
   async loadSprites(): Promise<void> {
-    const basePath = '/assets/sprites'
-
-    const loadImage = (path: string): Promise<HTMLImageElement> => {
-      return new Promise((resolve, reject) => {
-        const img = new Image()
-        img.onload = () => resolve(img)
-        img.onerror = reject
-        img.src = `${basePath}/${path}`
-      })
-    }
-
-    const [
-      background,
-      floor,
-      bird0,
-      bird1,
-      bird2,
-      pipeGreen,
-      gameOver,
-      message,
-      d0, d1, d2, d3, d4, d5, d6, d7, d8, d9,
-    ] = await Promise.all([
-      loadImage('background-day.png'),
-      loadImage('base.png'),
-      loadImage('yellowbird-upflap.png'),
-      loadImage('yellowbird-midflap.png'),
-      loadImage('yellowbird-downflap.png'),
-      loadImage('pipe-green.png'),
-      loadImage('gameover.png'),
-      loadImage('message.png'),
-      loadImage('0.png'),
-      loadImage('1.png'),
-      loadImage('2.png'),
-      loadImage('3.png'),
-      loadImage('4.png'),
-      loadImage('5.png'),
-      loadImage('6.png'),
-      loadImage('7.png'),
-      loadImage('8.png'),
-      loadImage('9.png'),
-    ])
-
-    this.sprites = {
-      background,
-      floor,
-      bird: [bird0, bird1, bird2, bird1], // Animation cycle: up, mid, down, mid
-      pipeUp: this.flipImageVertically(pipeGreen),
-      pipeDown: pipeGreen,
-      digits: [d0, d1, d2, d3, d4, d5, d6, d7, d8, d9],
-      gameOver,
-      message,
-    }
-
+    this.sprites = await loadAllSprites(true) // include message sprite
     this.loaded = true
   }
 
@@ -161,83 +108,39 @@ export class Renderer {
   private drawFloor(state: RawGameState): void {
     if (!this.sprites) return
 
-    // Use floor position from game state (synced with game logic, not render frames)
-    const floorX = state.floorX
-
-    // Draw two copies of floor for seamless scrolling
-    const floorY = GameConfig.VIEWPORT_HEIGHT
-    this.ctx.drawImage(this.sprites.floor, floorX, floorY)
-    this.ctx.drawImage(
-      this.sprites.floor,
-      floorX + this.sprites.floor.width,
-      floorY
-    )
+    drawSharedFloor(this.ctx, this.sprites, state.floorX)
   }
 
   private drawPipes(state: RawGameState): void {
     if (!this.sprites) return
 
-    for (const pipe of state.pipes) {
-      const gapTop = pipe.gapCenterY - GameConfig.PIPE.GAP / 2
-      const gapBottom = pipe.gapCenterY + GameConfig.PIPE.GAP / 2
-
-      // Upper pipe (flipped)
-      const upperY = gapTop - this.sprites.pipeUp.height
-      this.ctx.drawImage(this.sprites.pipeUp, pipe.x, upperY)
-
-      // Lower pipe
-      this.ctx.drawImage(this.sprites.pipeDown, pipe.x, gapBottom)
-    }
+    drawSharedPipes(this.ctx, this.sprites, state.pipes)
   }
 
   private drawBird(state: RawGameState): void {
     if (!this.sprites) return
 
-    // Animate bird wings
-    if (this.frameCount % GameConfig.BIRD.FRAME_RATE === 0) {
-      this.birdFrame = (this.birdFrame + 1) % this.sprites.bird.length
-    }
-
-    const birdImg = this.sprites.bird[this.birdFrame]
     const birdX = GameConfig.BIRD.X
     const birdY = state.birdY
-
-    // Apply rotation
-    this.ctx.save()
-    this.ctx.translate(
-      birdX + birdImg.width / 2,
-      birdY + birdImg.height / 2
+    this.birdFrame = drawSharedBird(
+      this.ctx,
+      this.sprites,
+      this.birdFrame,
+      this.frameCount,
+      birdX,
+      birdY,
+      state.birdRotation
     )
-    this.ctx.rotate((state.birdRotation * Math.PI) / 180)
-    this.ctx.drawImage(
-      birdImg,
-      -birdImg.width / 2,
-      -birdImg.height / 2
-    )
-    this.ctx.restore()
   }
 
   private drawScore(score: number): void {
     if (!this.sprites) return
 
-    const scoreStr = score.toString()
-    const digitWidth = this.sprites.digits[0].width
-    const totalWidth = scoreStr.length * digitWidth
-    const startX = (GameConfig.WIDTH - totalWidth) / 2
-    const startY = 30
-
-    for (let i = 0; i < scoreStr.length; i++) {
-      const digit = parseInt(scoreStr[i], 10)
-      this.ctx.drawImage(
-        this.sprites.digits[digit],
-        startX + i * digitWidth,
-        startY
-      )
-    }
+    drawSharedScore(this.ctx, this.sprites, score, GameConfig.WIDTH, 30, 1)
   }
 
   private drawMessage(): void {
-    if (!this.sprites) return
+    if (!this.sprites || !this.sprites.message) return
 
     const msgX = (GameConfig.WIDTH - this.sprites.message.width) / 2
     const msgY = (GameConfig.HEIGHT - this.sprites.message.height) / 2 - 50
@@ -248,102 +151,24 @@ export class Renderer {
   private drawGameOver(): void {
     if (!this.sprites) return
 
-    const goX = (GameConfig.WIDTH - this.sprites.gameOver.width) / 2
-    const goY = (GameConfig.HEIGHT - this.sprites.gameOver.height) / 2 - 50
-
-    // Semi-transparent overlay
-    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
-    this.ctx.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT)
-
-    this.ctx.drawImage(this.sprites.gameOver, goX, goY)
+    drawSharedGameOver(
+      this.ctx,
+      this.sprites,
+      GameConfig.WIDTH,
+      GameConfig.HEIGHT,
+      0.3,
+      -50
+    )
   }
 
   /**
    * Draw reward indicator in bottom right (over ground texture)
-   * Styled to match Flappy Bird's score aesthetic with outline
    */
   private drawReward(reward: number, cumulativeReward?: number): void {
-    const ctx = this.ctx
-    
     // Position: bottom right, above the floor
     const x = GameConfig.WIDTH - 12
     const y = GameConfig.HEIGHT - 24
-    
-    // Helper to draw text with dark outline (like Flappy Bird score)
-    const drawOutlinedText = (text: string, tx: number, ty: number, fillColor: string, fontSize: number) => {
-      ctx.font = `bold ${fontSize}px Arial, sans-serif`
-      ctx.textAlign = 'right'
-      ctx.textBaseline = 'bottom'
-      
-      // Dark outline (draw text offset in all directions)
-      ctx.fillStyle = '#543847'
-      ctx.fillText(text, tx - 2, ty)
-      ctx.fillText(text, tx + 2, ty)
-      ctx.fillText(text, tx, ty - 2)
-      ctx.fillText(text, tx, ty + 2)
-      ctx.fillText(text, tx - 1, ty - 1)
-      ctx.fillText(text, tx + 1, ty - 1)
-      ctx.fillText(text, tx - 1, ty + 1)
-      ctx.fillText(text, tx + 1, ty + 1)
-      
-      // Main fill
-      ctx.fillStyle = fillColor
-      ctx.fillText(text, tx, ty)
-    }
-    
-    // Format reward with sign and fixed decimals
-    const sign = reward >= 0 ? '+' : ''
-    const rewardText = `${sign}${reward.toFixed(3)}`
-    
-    // Color based on reward value (brighter, more readable)
-    let color: string
-    if (reward > 0.5) {
-      color = '#7fff00' // Chartreuse for big positive
-    } else if (reward > 0) {
-      color = '#98fb98' // Pale green for small positive
-    } else if (reward > -0.1) {
-      color = '#fff8dc' // Cornsilk/cream for small negative
-    } else if (reward > -0.5) {
-      color = '#ffa500' // Orange for medium negative
-    } else {
-      color = '#ff6347' // Tomato red for big negative
-    }
-    
-    ctx.save()
-    
-    // Label
-    drawOutlinedText('REWARD', x, y - 20, '#ffffff', 11)
-    
-    // Instant reward
-    drawOutlinedText(rewardText, x, y, color, 18)
-    
-    // Cumulative reward below (slightly smaller)
-    if (cumulativeReward !== undefined) {
-      const cumSign = cumulativeReward >= 0 ? '+' : ''
-      const cumText = `Σ ${cumSign}${cumulativeReward.toFixed(2)}`
-      const cumColor = cumulativeReward >= 0 ? '#98fb98' : '#ff6347'
-      
-      drawOutlinedText(cumText, x, y + 20, cumColor, 15)
-    }
-    
-    ctx.restore()
-  }
-
-  /**
-   * Flip an image vertically (for upper pipe)
-   */
-  private flipImageVertically(img: HTMLImageElement): HTMLImageElement {
-    const canvas = document.createElement('canvas')
-    canvas.width = img.width
-    canvas.height = img.height
-    const ctx = canvas.getContext('2d')!
-    ctx.translate(0, canvas.height)
-    ctx.scale(1, -1)
-    ctx.drawImage(img, 0, 0)
-
-    const flipped = new Image()
-    flipped.src = canvas.toDataURL()
-    return flipped
+    drawRewardIndicator(this.ctx, reward, cumulativeReward, x, y)
   }
 
   /**

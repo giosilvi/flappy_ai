@@ -74,7 +74,7 @@ export const DefaultRewardConfig: RewardConfig = {
   passPipe: 1.0,
   deathPenalty: -1.0,
   flapCost: 0.003,         // Match Python default
-  centerReward: 0.01,      // Shaping: small reward for moving toward gap center
+  centerReward: 0.15,      // Shaping: reward for moving toward gap center
 }
 
 /**

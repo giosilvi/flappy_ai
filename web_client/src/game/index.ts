@@ -23,6 +23,18 @@ export {
   getObservationDim,
   clamp,
 } from './GameState'
+export {
+  VectorizedEnv,
+  VALID_INSTANCE_COUNTS,
+  MAX_VISUALIZED_INSTANCES,
+  isValidInstanceCount,
+  getNextInstanceCount,
+  getPrevInstanceCount,
+  type ValidInstanceCount,
+  type VectorizedStepResult,
+  type EpisodeStats,
+} from './VectorizedEnv'
+export { TiledRenderer } from './TiledRenderer'
 
 
 

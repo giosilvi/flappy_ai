@@ -54,6 +54,10 @@
     <!-- Secondary Metrics -->
     <div class="metrics-secondary">
       <div class="secondary-metric">
+        <span class="secondary-label">Instances</span>
+        <span class="secondary-value" :class="{ 'text-accent': numInstances > 1 }">{{ numInstances }}</span>
+      </div>
+      <div class="secondary-metric">
         <span class="secondary-label">Buffer</span>
         <span class="secondary-value">{{ formatNumber(bufferSize) }}</span>
       </div>
@@ -189,6 +193,10 @@ export default defineComponent({
     isWarmup: {
       type: Boolean,
       default: false,
+    },
+    numInstances: {
+      type: Number,
+      default: 1,
     },
   },
   data() {
