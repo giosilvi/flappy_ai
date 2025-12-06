@@ -270,8 +270,8 @@ export default defineComponent({
         this.pendingNumInstances = null
         // Ensure auto-eval uses current instance count (capped at 64)
         // Scale interval with sqrt of instances (more instances = faster episodes = less frequent auto-eval)
-        const autoEvalInterval = Math.round(2500 * Math.sqrt(this.numInstances))
-        this.unifiedDQN.setAutoEval(true, Math.min(this.numInstances, 64), autoEvalInterval)
+        const autoEvalInterval = Math.round(2500 * Math.sqrt(desiredCount))
+        this.unifiedDQN.setAutoEval(true, Math.min(desiredCount, 64), autoEvalInterval)
       }
       } finally {
         this.isInitializing = false
