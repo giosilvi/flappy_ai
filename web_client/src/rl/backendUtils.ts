@@ -4,6 +4,8 @@
  */
 
 import * as tf from '@tensorflow/tfjs'
+// Import WebGPU backend to register it (required for GPU acceleration on modern browsers)
+import '@tensorflow/tfjs-backend-webgpu'
 
 export type BackendType = 'webgpu' | 'webgl' | 'cpu'
 
