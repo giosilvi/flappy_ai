@@ -1,10 +1,15 @@
 <template>
   <div class="control-panel panel">
     <div class="panel-header">
-      <span>{{ currentMode === 'eval' ? 'Evaluation Controls' : 'Training Controls' }}</span>
+      <span class="panel-title">{{ currentMode === 'eval' ? 'Evaluation Controls' : 'Training Controls' }}</span>
       <div class="header-actions">
         <!-- Backend indicator -->
-        <span class="backend-badge" :class="backendClass" :title="backendTooltip">
+        <span
+          class="backend-badge"
+          :class="backendClass"
+          :title="backendSwitchTooltip"
+          @click="cycleBackend"
+        >
           {{ backendLabel }}
         </span>
         <button 
@@ -14,6 +19,15 @@
           :title="isPaused ? 'Resume' : 'Pause'"
         >
           {{ isPaused ? '▶' : '⏸' }}
+        </button>
+        <button
+          class="btn-icon"
+          :class="{ active: !frameLimit30 }"
+          :disabled="numInstances > maxVisualized"
+          @click="toggleFrameLimitButton"
+          :title="numInstances > maxVisualized ? 'Only available with visualization' : (frameLimit30 ? 'Cap at 30 FPS' : 'Fast forward (uncapped)')"
+        >
+          <span class="ff-icon">>></span>
         </button>
       </div>
     </div>
@@ -309,6 +323,10 @@ export default defineComponent({
       type: String as PropType<BackendType>,
       default: 'cpu',
     },
+    availableBackends: {
+      type: Array as PropType<BackendType[]>,
+      default: () => [],
+    },
     frameLimit30: {
       type: Boolean,
       default: false,
@@ -360,6 +378,7 @@ export default defineComponent({
     'update:lrScheduler',
     'update:isPaused',
     'update:mode',
+    'cycle-backend',
     'reset',
     'restartEval',
   ],
@@ -400,6 +419,12 @@ export default defineComponent({
         cpu: 'Using CPU (no GPU acceleration)',
       }
       return tooltips[this.backend] || 'Computing backend'
+    },
+    backendSwitchTooltip(): string {
+      if (!this.availableBackends || this.availableBackends.length <= 1) {
+        return this.backendTooltip
+      }
+      return `${this.backendTooltip}\nClick to cycle available backends`
     },
     instanceCountTooltip(): string {
       return `Parallel Instances: Number of game environments running simultaneously.
@@ -476,6 +501,18 @@ More instances = more diverse experience = faster learning`
       const checked = (event.target as HTMLInputElement).checked
       this.$emit('update:frameLimit30', checked)
     },
+    toggleFrameLimitButton() {
+      this.$emit('update:frameLimit30', !this.frameLimit30)
+    },
+    cycleBackend() {
+      const list = this.availableBackends && this.availableBackends.length > 0
+        ? this.availableBackends
+        : ['webgpu', 'webgl', 'cpu']
+      if (list.length === 0) return
+      const idx = list.indexOf(this.backend as BackendType)
+      const next = list[(idx + 1) % list.length]
+      this.$emit('cycle-backend', next)
+    },
     toggleAutoDecay(event: Event) {
       const checked = (event.target as HTMLInputElement).checked
       this.$emit('update:autoDecay', checked)
@@ -526,6 +563,11 @@ More instances = more diverse experience = faster learning`
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.panel-title {
+  flex: 0 0 50%;
+  min-width: 50%;
 }
 
 .header-actions {
@@ -583,6 +625,12 @@ More instances = more diverse experience = faster learning`
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-bg-dark);
+}
+
+.ff-icon {
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 .mode-switcher {

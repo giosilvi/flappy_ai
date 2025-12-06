@@ -2,11 +2,6 @@
   <div class="game-canvas-container" ref="container" @touchstart.passive="onTouchStart">
     <canvas ref="canvas" class="game-canvas"></canvas>
     
-    <!-- Touch indicator for mobile -->
-    <div v-if="showTouchHint && isMobile" class="touch-hint">
-      <span class="touch-icon">👆</span>
-      <span class="touch-text">Tap to flap!</span>
-    </div>
     
     <!-- High instance count overlay - no visualization -->
     <div v-if="shouldShowNoVizOverlay" class="fast-mode-overlay">
@@ -62,7 +57,7 @@ export default defineComponent({
     },
     frameLimit30: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     // Training settings (synced to worker on init)
     epsilon: {
@@ -123,6 +118,7 @@ export default defineComponent({
       backend: 'cpu' as BackendType,
       lastInitHiddenLayers: null as number[] | null,
       pendingNumInstances: null as number | null,
+      preferredBackend: 'auto' as BackendType | 'auto',
     }
   },
   computed: {
@@ -195,6 +191,8 @@ export default defineComponent({
         // If an instance now exists with the same architecture, skip redundant re-init
         const desiredLayers = hiddenLayersOverride ? hiddenLayersOverride : this.hiddenLayersConfig
         if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers)) {
+          // Ensure flag is not left set from any prior attempt
+          this.isInitializing = false
           return
         }
         // Otherwise proceed to re-init with the new desired architecture
@@ -222,7 +220,7 @@ export default defineComponent({
             learningRate: this.learningRate,
           },
           numInstances: initNumInstances,
-          backend: 'auto',
+          backend: this.preferredBackend,
           visualize: this.canVisualize,
           frameLimit30: this.frameLimit30,
         })
@@ -406,8 +404,9 @@ export default defineComponent({
 
     // ===== Training Mode =====
     async startTraining(_hiddenLayers?: number[]) {
-      if (!this.unifiedDQN) {
-        await this.initUnifiedDQN()
+      // If a specific architecture is provided (e.g., from checkpoint), ensure we init with it
+      if (!this.unifiedDQN || _hiddenLayers) {
+        await this.initUnifiedDQN(_hiddenLayers)
       }
 
       // Stop any running eval before starting training (clean mode transition)
@@ -520,6 +519,11 @@ export default defineComponent({
 
     setFrameLimit(enabled: boolean) {
       this.unifiedDQN?.setFrameLimit(enabled)
+    },
+    async setPreferredBackend(backend: BackendType) {
+      this.preferredBackend = backend
+      // Reinitialize the agent with the requested backend
+      await this.initUnifiedDQN(this.hiddenLayersConfig)
     },
 
     setLRScheduler(enabled: boolean) {
@@ -636,7 +640,7 @@ export default defineComponent({
   aspect-ratio: 288 / 512; /* GameConfig.WIDTH / HEIGHT */
   border-radius: var(--radius-lg);
   box-shadow: 0 0 40px rgba(0, 217, 255, 0.15);
-  image-rendering: pixelated;
+  /* image-rendering: pixelated; */
   image-rendering: crisp-edges;
   cursor: pointer;
   object-fit: contain;

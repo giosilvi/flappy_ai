@@ -6,16 +6,16 @@
 
 import { GameConfig } from './config'
 import type { RawGameState } from './GameState'
-
-interface SpriteSet {
-  background: HTMLImageElement
-  floor: HTMLImageElement
-  bird: HTMLImageElement[]
-  pipeUp: HTMLImageElement
-  pipeDown: HTMLImageElement
-  digits: HTMLImageElement[]
-  gameOver: HTMLImageElement
-}
+import {
+  SpriteSet,
+  loadAllSprites,
+  drawRewardIndicator,
+  drawScore as drawSharedScore,
+  drawPipes as drawSharedPipes,
+  drawFloor as drawSharedFloor,
+  drawBird as drawSharedBird,
+  drawGameOver as drawSharedGameOver,
+} from './renderShared'
 
 interface TileLayout {
   cols: number
@@ -103,54 +103,7 @@ export class TiledRenderer {
    * Load all game sprites
    */
   async loadSprites(): Promise<void> {
-    const basePath = '/assets/sprites'
-
-    const loadImage = (path: string): Promise<HTMLImageElement> => {
-      return new Promise((resolve, reject) => {
-        const img = new Image()
-        img.onload = () => resolve(img)
-        img.onerror = reject
-        img.src = `${basePath}/${path}`
-      })
-    }
-
-    const [
-      background,
-      floor,
-      bird0, bird1, bird2,
-      pipeGreen,
-      gameOver,
-      d0, d1, d2, d3, d4, d5, d6, d7, d8, d9,
-    ] = await Promise.all([
-      loadImage('background-day.png'),
-      loadImage('base.png'),
-      loadImage('yellowbird-upflap.png'),
-      loadImage('yellowbird-midflap.png'),
-      loadImage('yellowbird-downflap.png'),
-      loadImage('pipe-green.png'),
-      loadImage('gameover.png'),
-      loadImage('0.png'),
-      loadImage('1.png'),
-      loadImage('2.png'),
-      loadImage('3.png'),
-      loadImage('4.png'),
-      loadImage('5.png'),
-      loadImage('6.png'),
-      loadImage('7.png'),
-      loadImage('8.png'),
-      loadImage('9.png'),
-    ])
-
-    this.sprites = {
-      background,
-      floor,
-      bird: [bird0, bird1, bird2, bird1],
-      pipeUp: this.flipImageVertically(pipeGreen),
-      pipeDown: pipeGreen,
-      digits: [d0, d1, d2, d3, d4, d5, d6, d7, d8, d9],
-      gameOver,
-    }
-
+    this.sprites = await loadAllSprites(false) // no message sprite needed
     this.loaded = true
   }
 
@@ -223,44 +176,38 @@ export class TiledRenderer {
     this.ctx.drawImage(this.sprites.background, 0, 0)
 
     // Draw pipes
-    for (const pipe of state.pipes) {
-      const gapTop = pipe.gapCenterY - GameConfig.PIPE.GAP / 2
-      const gapBottom = pipe.gapCenterY + GameConfig.PIPE.GAP / 2
-      const upperY = gapTop - this.sprites.pipeUp.height
-      this.ctx.drawImage(this.sprites.pipeUp, pipe.x, upperY)
-      this.ctx.drawImage(this.sprites.pipeDown, pipe.x, gapBottom)
-    }
+    drawSharedPipes(this.ctx, this.sprites, state.pipes)
 
     // Draw floor
-    const floorY = GameConfig.VIEWPORT_HEIGHT
-    this.ctx.drawImage(this.sprites.floor, state.floorX, floorY)
-    this.ctx.drawImage(this.sprites.floor, state.floorX + this.sprites.floor.width, floorY)
+    drawSharedFloor(this.ctx, this.sprites, state.floorX)
 
     // Draw bird
-    if (this.frameCount % GameConfig.BIRD.FRAME_RATE === 0) {
-      this.birdFrames[index] = (this.birdFrames[index] + 1) % this.sprites.bird.length
-    }
-    const birdImg = this.sprites.bird[this.birdFrames[index] || 0]
     const birdX = GameConfig.BIRD.X
     const birdY = state.birdY
 
-    this.ctx.save()
-    this.ctx.translate(birdX + birdImg.width / 2, birdY + birdImg.height / 2)
-    this.ctx.rotate((state.birdRotation * Math.PI) / 180)
-    this.ctx.drawImage(birdImg, -birdImg.width / 2, -birdImg.height / 2)
-    this.ctx.restore()
+    this.birdFrames[index] = drawSharedBird(
+      this.ctx,
+      this.sprites,
+      this.birdFrames[index] || 0,
+      this.frameCount,
+      birdX,
+      birdY,
+      state.birdRotation
+    )
 
-    // Draw score (smaller for tiles)
-    this.drawScore(state.score, scale < 0.5 ? 0.7 : 1.0)
+    // Draw score (slightly larger when more tiles to keep readability)
+    this.drawScore(state.score, this.getScoreScale())
 
     // Draw game over overlay if done
     if (state.done) {
-      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)'
-      this.ctx.fillRect(0, 0, GameConfig.WIDTH, GameConfig.HEIGHT)
-      
-      const goX = (GameConfig.WIDTH - this.sprites.gameOver.width) / 2
-      const goY = GameConfig.HEIGHT / 2 - this.sprites.gameOver.height
-      this.ctx.drawImage(this.sprites.gameOver, goX, goY)
+      drawSharedGameOver(
+        this.ctx,
+        this.sprites,
+        GameConfig.WIDTH,
+        GameConfig.HEIGHT,
+        0.4,
+        -this.sprites.gameOver.height / 2
+      )
     }
 
     // Draw tile index label
@@ -320,23 +267,17 @@ export class TiledRenderer {
   private drawScore(score: number, sizeScale: number = 1.0): void {
     if (!this.sprites) return
 
-    const scoreStr = score.toString()
-    const digitWidth = this.sprites.digits[0].width * sizeScale
-    const digitHeight = this.sprites.digits[0].height * sizeScale
-    const totalWidth = scoreStr.length * digitWidth
-    const startX = (GameConfig.WIDTH - totalWidth) / 2
-    const startY = 20
+    drawSharedScore(this.ctx, this.sprites, score, GameConfig.WIDTH, 20, sizeScale)
+  }
 
-    for (let i = 0; i < scoreStr.length; i++) {
-      const digit = parseInt(scoreStr[i], 10)
-      this.ctx.drawImage(
-        this.sprites.digits[digit],
-        startX + i * digitWidth,
-        startY,
-        digitWidth,
-        digitHeight
-      )
-    }
+  /**
+   * Scale score digits based on number of tiles:
+   * 1 tile -> 1.0, 4 tiles -> 1.1, 16 tiles -> 1.25
+   */
+  private getScoreScale(): number {
+    if (this.numInstances <= 1) return 1
+    if (this.numInstances <= 4) return 1.1
+    return 1.25
   }
 
   /**
@@ -370,97 +311,14 @@ export class TiledRenderer {
     tileWidth: number,
     tileHeight: number
   ): void {
-    const ctx = this.ctx
-    
     // Anchor to tile's bottom-right corner with fixed pixel offset
-    const offsetFromRight = 12  // Fixed pixels from right edge
-    const offsetFromBottom = 24  // Fixed pixels from bottom edge
+    const offsetFromRight = 12
+    const offsetFromBottom = 24
     
     const screenX = tileOffsetX + tileWidth - offsetFromRight
     const screenY = tileOffsetY + tileHeight - offsetFromBottom
     
-    // Fixed font sizes (not scaled) - matching original size for 1 instance
-    const fontSize = 18
-    const labelSize = 11
-    const cumSize = 15
-    
-    // Helper to draw text with dark outline (like Flappy Bird score)
-    const drawOutlinedText = (text: string, tx: number, ty: number, fillColor: string, fontSize: number) => {
-      ctx.font = `bold ${fontSize}px Arial, sans-serif`
-      ctx.textAlign = 'right'
-      ctx.textBaseline = 'bottom'
-      
-      const offset = 2  // Fixed outline offset (matching original)
-      
-      // Dark outline (draw text offset in all directions)
-      ctx.fillStyle = '#543847'
-      ctx.fillText(text, tx - offset, ty)
-      ctx.fillText(text, tx + offset, ty)
-      ctx.fillText(text, tx, ty - offset)
-      ctx.fillText(text, tx, ty + offset)
-      ctx.fillText(text, tx - offset / 2, ty - offset / 2)
-      ctx.fillText(text, tx + offset / 2, ty - offset / 2)
-      ctx.fillText(text, tx - offset / 2, ty + offset / 2)
-      ctx.fillText(text, tx + offset / 2, ty + offset / 2)
-      
-      // Main fill
-      ctx.fillStyle = fillColor
-      ctx.fillText(text, tx, ty)
-    }
-    
-    // Format reward with sign and fixed decimals
-    const sign = reward >= 0 ? '+' : ''
-    const rewardText = `${sign}${reward.toFixed(3)}`
-    
-    // Color based on reward value
-    let color: string
-    if (reward > 0.5) {
-      color = '#7fff00' // Chartreuse for big positive
-    } else if (reward > 0) {
-      color = '#98fb98' // Pale green for small positive
-    } else if (reward > -0.1) {
-      color = '#fff8dc' // Cornsilk/cream for small negative
-    } else if (reward > -0.5) {
-      color = '#ffa500' // Orange for medium negative
-    } else {
-      color = '#ff6347' // Tomato red for big negative
-    }
-    
-    ctx.save()
-    
-    // Label (spacing in screen space)
-    drawOutlinedText('REWARD', screenX, screenY - 20, '#ffffff', labelSize)
-    
-    // Instant reward
-    drawOutlinedText(rewardText, screenX, screenY, color, fontSize)
-    
-    // Cumulative reward below (slightly smaller)
-    if (cumulativeReward !== undefined) {
-      const cumSign = cumulativeReward >= 0 ? '+' : ''
-      const cumText = `Σ ${cumSign}${cumulativeReward.toFixed(2)}`
-      const cumColor = cumulativeReward >= 0 ? '#98fb98' : '#ff6347'
-      
-      drawOutlinedText(cumText, screenX, screenY + 20, cumColor, cumSize)
-    }
-    
-    ctx.restore()
-  }
-
-  /**
-   * Flip an image vertically (for upper pipe)
-   */
-  private flipImageVertically(img: HTMLImageElement): HTMLImageElement {
-    const canvas = document.createElement('canvas')
-    canvas.width = img.width
-    canvas.height = img.height
-    const ctx = canvas.getContext('2d')!
-    ctx.translate(0, canvas.height)
-    ctx.scale(1, -1)
-    ctx.drawImage(img, 0, 0)
-
-    const flipped = new Image()
-    flipped.src = canvas.toDataURL()
-    return flipped
+    drawRewardIndicator(this.ctx, reward, cumulativeReward, screenX, screenY)
   }
 
   /**

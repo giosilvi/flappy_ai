@@ -57,6 +57,7 @@
           :centerReward="centerReward"
           :numInstances="numInstances"
           :backend="backend"
+        :availableBackends="availableBackends"
           :frameLimit30="frameLimit30"
           :autoDecay="autoDecay"
           :lrScheduler="lrScheduler"
@@ -78,6 +79,7 @@
           @update:lrScheduler="updateLRScheduler"
           @update:isPaused="updatePaused"
           @update:mode="changeMode"
+        @cycle-backend="cycleBackend"
           @reset="resetTraining"
           @restartEval="restartEval"
         />
@@ -254,6 +256,7 @@ import NetworkConfig from './components/NetworkConfig.vue'
 import Leaderboard from './components/Leaderboard.vue'
 import LeaderboardPanel from './components/LeaderboardPanel.vue'
 import { apiClient, calculateAdjustedScore } from './services/apiClient'
+import { getAvailableBackends } from './rl/backendUtils'
 import type { BackendType } from './rl/backendUtils'
 import type { TrainingMetrics } from './rl/types'
 
@@ -287,6 +290,7 @@ export default defineComponent({
       centerReward: 0.15,
       numInstances: 1,
       backend: 'cpu' as BackendType,
+      availableBackends: [] as BackendType[],
       autoDecay: true,
       lrScheduler: false,
       epsilonDecaySteps: 200000,
@@ -354,6 +358,13 @@ export default defineComponent({
   },
   async mounted() {
     await this.refreshLeaderboardThreshold()
+    this.availableBackends = await getAvailableBackends()
+    const best = this.pickBestBackend(this.availableBackends)
+    this.backend = best
+    const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+    if (gameCanvas) {
+      await gameCanvas.setPreferredBackend(best)
+    }
   },
   methods: {
     async refreshLeaderboardThreshold() {
@@ -365,6 +376,28 @@ export default defineComponent({
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
         gameCanvas.startGame()
+      }
+    },
+    pickBestBackend(list: BackendType[]): BackendType {
+      const priority: BackendType[] = ['webgpu', 'webgl', 'cpu']
+      for (const b of priority) {
+        if (list.includes(b)) return b
+      }
+      return 'cpu'
+    },
+    async cycleBackend(next: BackendType) {
+      const shouldPause = this.mode === 'training' || this.mode === 'eval'
+      if (shouldPause && !this.isPaused) {
+        this.updatePaused(true)
+      }
+
+      this.backend = next
+      if (this.availableBackends.length === 0) {
+        this.availableBackends = await getAvailableBackends()
+      }
+      const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
+      if (gameCanvas) {
+        await gameCanvas.setPreferredBackend(next)
       }
     },
     openTrainingConfig() {
@@ -657,6 +690,9 @@ export default defineComponent({
         this.evalStats = null
         this.evalScores = []
         this.evalComplete = false
+        // Tentatively lock target instances to current selection to avoid stale value
+        // in case episode-end events arrive before startEval resolves.
+        this.evalTargetInstances = Math.min(this.numInstances, 64)
         if (gameCanvas) {
           // Note: startEval() sets epsilon=0 internally after initialization completes
           // to avoid race condition where setEpsilon fires before unifiedDQN is ready
@@ -766,6 +802,8 @@ export default defineComponent({
       this.evalStats = null
       this.evalScores = []
       this.evalComplete = false
+      // Tentatively lock target instances before startEval resolves to avoid stale value
+      this.evalTargetInstances = Math.min(this.numInstances, 64)
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
       if (gameCanvas) {
         try {
