@@ -117,6 +117,7 @@ export default defineComponent({
       isMobile: false,
       backend: 'cpu' as BackendType,
       lastInitHiddenLayers: null as number[] | null,
+      lastInitBackend: null as BackendType | 'auto' | null,
       pendingNumInstances: null as number | null,
       preferredBackend: 'auto' as BackendType | 'auto',
     }
@@ -190,8 +191,9 @@ export default defineComponent({
         await new Promise(resolve => setTimeout(resolve, 50))
       }
 
-      // If an instance now exists with the same architecture, skip redundant re-init
-      if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers)) {
+      // If an instance now exists with the same architecture AND backend, skip redundant re-init
+      const backendChanged = this.lastInitBackend !== this.preferredBackend
+      if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers) && !backendChanged) {
         return
       }
       
@@ -205,6 +207,7 @@ export default defineComponent({
 
         const hiddenLayers = [...desiredLayers]
         this.lastInitHiddenLayers = [...hiddenLayers]
+        this.lastInitBackend = this.preferredBackend
 
         // Capture the current instance count at init start
         const initNumInstances = this.numInstances
@@ -266,7 +269,9 @@ export default defineComponent({
         }
         this.pendingNumInstances = null
         // Ensure auto-eval uses current instance count (capped at 64)
-        this.unifiedDQN.setAutoEval(true, Math.min(this.numInstances, 64), 2500)
+        // Scale interval with sqrt of instances (more instances = faster episodes = less frequent auto-eval)
+        const autoEvalInterval = Math.round(2500 * Math.sqrt(this.numInstances))
+        this.unifiedDQN.setAutoEval(true, Math.min(this.numInstances, 64), autoEvalInterval)
       }
       } finally {
         this.isInitializing = false
@@ -279,7 +284,9 @@ export default defineComponent({
         this.unifiedDQN.setNumInstances(count as 1 | 4 | 16 | 64 | 256 | 1024)
         this.unifiedDQN.setVisualization(count <= MAX_VISUALIZED_INSTANCES)
         this.unifiedDQN.setFrameLimit(this.frameLimit30)
-        this.unifiedDQN.setAutoEval(true, Math.min(count, 64))
+        // Scale interval with sqrt of instances (more instances = faster episodes = less frequent auto-eval)
+        const autoEvalInterval = Math.round(2500 * Math.sqrt(count))
+        this.unifiedDQN.setAutoEval(true, Math.min(count, 64), autoEvalInterval)
       } else {
         // Defer applying until init completes
         this.pendingNumInstances = count
