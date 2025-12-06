@@ -67,6 +67,7 @@ let numEnvs = 1
 let autoRestartEval = false
 let frameLimitEnabled = false
 let lastFrameTime = 0
+let lastTrainingNumEnvs: number | null = null
 const FRAME_INTERVAL_MS = 1000 / 30
 
 // Auto-eval state
@@ -639,6 +640,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
           self.postMessage({ type: 'error', message: 'Not initialized' } as WorkerResponse)
           return
         }
+        const shouldResetEnv = lastTrainingNumEnvs === null ? true : numEnvs !== lastTrainingNumEnvs
         isTraining = true
         isEval = false
         visualize = msg.visualize && numEnvs <= MAX_VISUALIZED_INSTANCES
@@ -652,10 +654,13 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             collector.recordEpisode(stats.reward, stats.length, stats.score)
           })
         }
-        env.resetAll()
+        if (shouldResetEnv) {
+          env.resetAll()
+        }
         lastMetricsTime = performance.now()
         lastStatesTime = performance.now()
         lastNetworkVizTime = 0  // Reset to trigger immediate emit
+        lastTrainingNumEnvs = numEnvs
         runTrainingBatch()
         break
 

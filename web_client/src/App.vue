@@ -141,6 +141,37 @@
           />
         </div>
 
+        <!-- Eval In Progress Overlay (shown when headless eval is running) -->
+        <div v-if="mode === 'eval' && !evalComplete && !autoEvalActive && evalTargetInstances > 16" class="game-overlay eval-overlay">
+          <div class="eval-stats-panel eval-in-progress">
+            <h3 class="eval-title">⏳ Evaluation in Progress</h3>
+            <p class="eval-subtitle">{{ evalTargetInstances }} instances running with ε=0</p>
+            
+            <div class="eval-progress-bar">
+              <div class="eval-progress-fill" :style="{ width: evalProgressPercent + '%' }"></div>
+            </div>
+            
+            <div class="eval-results-grid">
+              <div class="eval-stat-box">
+                <span class="stat-number">{{ evalStats?.count || 0 }} / {{ evalTargetInstances }}</span>
+                <span class="stat-label">Episodes Complete</span>
+              </div>
+              <div class="eval-stat-box">
+                <span class="stat-number">{{ evalStats?.min ?? '—' }}</span>
+                <span class="stat-label">Min Score</span>
+              </div>
+              <div class="eval-stat-box highlight">
+                <span class="stat-number">{{ evalStats ? evalStats.avg.toFixed(1) : '—' }}</span>
+                <span class="stat-label">Avg Score</span>
+              </div>
+              <div class="eval-stat-box best">
+                <span class="stat-number">{{ evalStats?.max ?? '—' }}</span>
+                <span class="stat-label">Max Score</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Eval Stats Overlay (shown only when manual eval completes) -->
         <div v-if="mode === 'eval' && evalComplete && !autoEvalActive" class="game-overlay eval-overlay">
           <div class="eval-stats-panel">
@@ -150,7 +181,7 @@
             <div class="eval-results-grid">
               <div class="eval-stat-box">
                 <span class="stat-number">{{ evalStats?.count || 0 }}</span>
-                <span class="stat-label">Episodes</span>
+                <span class="stat-label">Episodes Complete</span>
               </div>
               <div class="eval-stat-box">
                 <span class="stat-number">{{ evalStats?.min || 0 }}</span>
@@ -386,6 +417,11 @@ export default defineComponent({
     },
     effectiveEpsilon(): number {
       return this.mode === 'eval' ? 0 : this.epsilon
+    },
+    evalProgressPercent(): number {
+      if (!this.evalTargetInstances || this.evalTargetInstances === 0) return 0
+      const count = this.evalStats?.count || 0
+      return Math.min(100, (count / this.evalTargetInstances) * 100)
     },
     networkParams(): number {
       const inputDim = 6
@@ -1186,6 +1222,26 @@ export default defineComponent({
 .eval-restart-btn {
   width: 100%;
   margin-top: var(--spacing-sm);
+}
+
+.eval-in-progress .eval-title {
+  color: var(--color-accent);
+}
+
+.eval-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--color-bg-light);
+  border-radius: 3px;
+  margin: var(--spacing-md) 0;
+  overflow: hidden;
+}
+
+.eval-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-primary));
+  border-radius: 3px;
+  transition: width 0.3s ease;
 }
 
 .overlay-content {
