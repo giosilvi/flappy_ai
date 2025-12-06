@@ -366,7 +366,14 @@ export class TFDQNAgent {
   }
 
   setEpsilonDecaySteps(steps: number): void {
-    this.config.epsilonDecaySteps = Math.max(1000, steps)
+    const newSteps = Math.max(1000, steps)
+    // When decay steps change, reset the decay progress to start from current epsilon
+    // This prevents epsilon from collapsing to minimum when reducing decay steps
+    if (this.autoDecayEnabled && newSteps !== this.config.epsilonDecaySteps) {
+      this.decayStartEpsilon = this.epsilon
+      this.decayStartEnvStep = this.totalEnvSteps
+    }
+    this.config.epsilonDecaySteps = newSteps
   }
 
   getLearningRate(): number {
