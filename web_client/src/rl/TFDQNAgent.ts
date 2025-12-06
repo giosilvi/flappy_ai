@@ -344,7 +344,15 @@ export class TFDQNAgent {
   }
 
   setEpsilon(value: number): void {
-    this.epsilon = Math.max(0, Math.min(1, value))
+    const newEpsilon = Math.max(0, Math.min(1, value))
+    // If auto-decay is enabled and epsilon is being changed externally,
+    // reset the decay anchors so decay continues from the new value
+    // (prevents recalculation from overwriting the restored epsilon)
+    if (this.autoDecayEnabled && newEpsilon !== this.epsilon) {
+      this.decayStartEpsilon = newEpsilon
+      this.decayStartEnvStep = this.totalEnvSteps
+    }
+    this.epsilon = newEpsilon
   }
 
   getAutoDecay(): boolean {
