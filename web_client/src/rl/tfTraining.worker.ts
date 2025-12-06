@@ -430,12 +430,14 @@ function runAutoEval(): void {
   
   // Start eval loop (will run until all instances complete)
   isEval = true
-  visualize = false  // Don't visualize auto-eval (100 instances)
+  // Set visualization based on auto-eval instance count (respects frame limit if visualizable)
+  visualize = autoEvalNumEnvs <= MAX_VISUALIZED_INSTANCES
   autoRestartEval = false  // Don't auto-restart, we want all to finish
   
   // Start eval batch loop - it will check for completion and call finishEval
   // finishEval will detect isAutoEvalRunning and handle restoration
   lastStatesTime = performance.now()
+  lastFrameTime = performance.now()  // Reset frame timing for proper pacing
   runEvalBatch()
 }
 
@@ -625,6 +627,11 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         applyScaling(numEnvs)
         env?.resize(numEnvs)
         metricsCollector?.updateTrainingMetrics({ numInstances: numEnvs })
+        // Update visualization based on new instance count (only during active training/eval)
+        if (isTraining || isEval) {
+          visualize = numEnvs <= MAX_VISUALIZED_INSTANCES
+          lastFrameTime = performance.now()  // Reset frame timing for proper pacing
+        }
         break
 
       case 'startTraining':
