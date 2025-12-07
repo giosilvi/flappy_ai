@@ -424,7 +424,7 @@ export default defineComponent({
   computed: {
     gameTitle(): string {
       const game = getGame(this.gameId)
-      return game?.info.name.toUpperCase() || this.gameId.toUpperCase()
+      return game?.info?.name?.toUpperCase() || this.gameId.toUpperCase()
     },
     canSubmitScore(): boolean {
       return this.canSubmitToLeaderboard

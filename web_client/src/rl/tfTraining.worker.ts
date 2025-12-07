@@ -128,10 +128,12 @@ function applyScaling(currentNumEnvs: number): void {
     ;(agent as unknown as { config: TFDQNConfig }).config.targetUpdateFreq = config.targetUpdateFreq
   }
 
-  if (!buffer || bufferCapacity !== newBufferCapacity) {
-    bufferCapacity = newBufferCapacity
-    buffer = new ReplayBuffer(bufferCapacity)
+  if (!buffer) {
+    buffer = new ReplayBuffer(newBufferCapacity)
+  } else if (bufferCapacity !== newBufferCapacity) {
+    buffer.resize(newBufferCapacity)
   }
+  bufferCapacity = newBufferCapacity
 
   if (metricsCollector) {
     metricsCollector = new MetricsCollector({
