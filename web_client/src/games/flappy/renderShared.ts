@@ -243,11 +243,12 @@ export function drawScore(
 export function drawPipes(
   ctx: CanvasRenderingContext2D,
   sprites: SpriteSet,
-  pipes: { x: number; gapCenterY: number }[]
+  pipes: { x: number; gapCenterY: number; gapSize: number }[]
 ): void {
   for (const pipe of pipes) {
-    const gapTop = pipe.gapCenterY - GameConfig.PIPE.GAP / 2
-    const gapBottom = pipe.gapCenterY + GameConfig.PIPE.GAP / 2
+    // Use per-pipe gapSize for progressive difficulty
+    const gapTop = pipe.gapCenterY - pipe.gapSize / 2
+    const gapBottom = pipe.gapCenterY + pipe.gapSize / 2
     const upperY = gapTop - sprites.pipeUp.height
     ctx.drawImage(sprites.pipeUp, pipe.x, upperY)
     ctx.drawImage(sprites.pipeDown, pipe.x, gapBottom)

@@ -28,6 +28,7 @@ export interface RawGameState {
 export interface PipeState {
   x: number
   gapCenterY: number
+  gapSize: number // Per-pipe gap size for progressive difficulty
   gapVelY?: number // For moving gaps
   passed: boolean
 }
@@ -127,6 +128,7 @@ function createDefaultPipe(index: number): PipeState {
   return {
     x: GameConfig.WIDTH + GameConfig.PIPE.SPAWN_DISTANCE * index,
     gapCenterY: GameConfig.VIEWPORT_HEIGHT / 2,
+    gapSize: GameConfig.PIPE.INITIAL_GAP,
     gapVelY: 0,
     passed: false,
   }

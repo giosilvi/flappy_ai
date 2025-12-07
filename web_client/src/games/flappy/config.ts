@@ -31,7 +31,10 @@ export const GameConfig = {
   PIPE: {
     WIDTH: 52,
     HEIGHT: 320,
-    GAP: 120, // Gap between upper and lower pipes
+    GAP: 120, // Gap between upper and lower pipes (legacy, use INITIAL_GAP)
+    INITIAL_GAP: 120, // Starting gap at pipe 0
+    MIN_GAP: 26, // Final gap at pipe 999 (bird height 24 + 2px clearance)
+    MAX_PIPES: 1000, // Absolute pipe limit for progressive difficulty
     VELOCITY: -5, // Horizontal speed
     SPAWN_DISTANCE: 182, // Distance between pipe centers (width * 3.5)
     INITIAL_X_OFFSET: 468, // First pipe x position (width + width*3)

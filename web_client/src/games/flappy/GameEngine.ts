@@ -37,6 +37,7 @@ export class GameEngine {
   private prevScore: number = 0
   private episode: number = 0
   private totalSteps: number = 0
+  private pipeCount: number = 0 // Tracks total pipes spawned for progressive difficulty
 
   constructor(
     rewardConfig: RewardConfig = DefaultRewardConfig,
@@ -54,6 +55,7 @@ export class GameEngine {
     this.state = createInitialState()
     this.prevScore = 0
     this.episode++
+    this.pipeCount = 0 // Reset pipe counter for progressive difficulty
 
     // Give the bird an initial upward velocity (like Python version)
     this.state.birdVelY = GameConfig.BIRD.FLAP_VELOCITY
@@ -142,6 +144,17 @@ export class GameEngine {
 
   // ===== Private methods =====
 
+  /**
+   * Calculate gap size for a given pipe number (progressive difficulty)
+   * Gap linearly decreases from INITIAL_GAP (pipe 0) to MIN_GAP (pipe 999)
+   */
+  private calculateGapForPipe(pipeNumber: number): number {
+    const { INITIAL_GAP, MIN_GAP, MAX_PIPES } = GameConfig.PIPE
+    // Clamp pipe number to valid range and calculate progress (0 to 1)
+    const progress = Math.min(pipeNumber, MAX_PIPES - 1) / (MAX_PIPES - 1)
+    return INITIAL_GAP - (INITIAL_GAP - MIN_GAP) * progress
+  }
+
   private flap(): void {
     if (this.state.birdY > GameConfig.BIRD.MIN_Y) {
       this.state.birdVelY = GameConfig.BIRD.FLAP_VELOCITY
@@ -206,18 +219,24 @@ export class GameEngine {
   }
 
   private spawnPipe(): void {
+    // Calculate gap size based on current pipe count (progressive difficulty)
+    const gapSize = this.calculateGapForPipe(this.pipeCount)
+    
     // Random gap position (matching Python logic)
     const baseY = GameConfig.VIEWPORT_HEIGHT
-    const minGapY = baseY * 0.2 + GameConfig.PIPE.GAP / 2
-    const maxGapY = baseY * 0.8 - GameConfig.PIPE.GAP / 2
+    const minGapY = baseY * 0.2 + gapSize / 2
+    const maxGapY = baseY * 0.8 - gapSize / 2
     const gapCenterY = minGapY + Math.random() * (maxGapY - minGapY)
 
     this.state.pipes.push({
       x: GameConfig.WIDTH + 10,
       gapCenterY,
+      gapSize,
       gapVelY: 0,
       passed: false,
     })
+    
+    this.pipeCount++ // Increment for next pipe's progressive difficulty
   }
 
   private spawnInitialPipes(): void {
@@ -233,17 +252,25 @@ export class GameEngine {
   }
 
   private createRandomPipe(): PipeState {
+    // Calculate gap size based on current pipe count (progressive difficulty)
+    const gapSize = this.calculateGapForPipe(this.pipeCount)
+    
     const baseY = GameConfig.VIEWPORT_HEIGHT
-    const minGapY = baseY * 0.2 + GameConfig.PIPE.GAP / 2
-    const maxGapY = baseY * 0.8 - GameConfig.PIPE.GAP / 2
+    const minGapY = baseY * 0.2 + gapSize / 2
+    const maxGapY = baseY * 0.8 - gapSize / 2
     const gapCenterY = minGapY + Math.random() * (maxGapY - minGapY)
 
-    return {
+    const pipe: PipeState = {
       x: GameConfig.WIDTH + 10,
       gapCenterY,
+      gapSize,
       gapVelY: 0,
       passed: false,
     }
+    
+    this.pipeCount++ // Increment for next pipe's progressive difficulty
+    
+    return pipe
   }
 
   private checkCollisions(): void {
@@ -251,6 +278,12 @@ export class GameEngine {
     const birdY = this.state.birdY
     const birdW = GameConfig.BIRD.WIDTH
     const birdH = GameConfig.BIRD.HEIGHT
+
+    // Win condition: passed all 1000 pipes
+    if (this.state.score >= GameConfig.PIPE.MAX_PIPES) {
+      this.state.done = true // Victory!
+      return
+    }
 
     // Floor collision
     if (birdY + birdH >= GameConfig.VIEWPORT_HEIGHT) {
@@ -270,9 +303,9 @@ export class GameEngine {
         birdX + birdW > pipe.x &&
         birdX < pipe.x + GameConfig.PIPE.WIDTH
       ) {
-        // Check vertical overlap with upper or lower pipe
-        const gapTop = pipe.gapCenterY - GameConfig.PIPE.GAP / 2
-        const gapBottom = pipe.gapCenterY + GameConfig.PIPE.GAP / 2
+        // Check vertical overlap with upper or lower pipe (using per-pipe gap size)
+        const gapTop = pipe.gapCenterY - pipe.gapSize / 2
+        const gapBottom = pipe.gapCenterY + pipe.gapSize / 2
 
         if (birdY < gapTop || birdY + birdH > gapBottom) {
           this.state.done = true
