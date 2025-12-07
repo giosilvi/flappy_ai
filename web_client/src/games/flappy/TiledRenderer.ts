@@ -272,12 +272,16 @@ export class TiledRenderer {
 
   /**
    * Scale score digits based on number of tiles:
-   * 1 tile -> 1.0, 4 tiles -> 1.1, 16 tiles -> 1.25
+   * linearly grows from 1.0 (1 tile) to 2.0 (16+ tiles)
    */
   private getScoreScale(): number {
     if (this.numInstances <= 1) return 1
-    if (this.numInstances <= 4) return 1.1
-    return 1.25
+
+    // Cap growth at 16 instances; interpolate from 1.0 -> 2.0
+    const capped = Math.min(this.numInstances, 16)
+    const t = (capped - 1) / (16 - 1) // 0 at 1 tile, 1 at 16 tiles
+    const scale = 1 + t // 1.0 → 2.0
+    return scale
   }
 
   /**

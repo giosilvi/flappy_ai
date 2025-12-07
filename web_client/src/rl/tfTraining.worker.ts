@@ -135,21 +135,14 @@ function applyScaling(currentNumEnvs: number): void {
   }
   bufferCapacity = newBufferCapacity
 
-  if (metricsCollector) {
-    metricsCollector = new MetricsCollector({
-      emitIntervalMs: METRICS_INTERVAL,
-      warmupSize: warmupSize,
+  // Keep existing metricsCollector to preserve cumulative metrics (episode count, totalSteps)
+  // Only re-wire the episode callback if env exists
+  if (metricsCollector && env) {
+    env.clearOnEpisodeComplete()
+    const collector = metricsCollector
+    env.setOnEpisodeComplete((stats) => {
+      collector.recordEpisode(stats.reward, stats.length, stats.score)
     })
-    // Re-wire episode callback for training metrics
-    if (env) {
-      env.clearOnEpisodeComplete()
-      const collector = metricsCollector
-      if (collector) {
-        env.setOnEpisodeComplete((stats) => {
-          collector.recordEpisode(stats.reward, stats.length, stats.score)
-        })
-      }
-    }
   }
 }
 
@@ -668,9 +661,10 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
           self.postMessage({ type: 'error', message: 'Not initialized' } as WorkerResponse)
           return
         }
-        // Always reset env if: first time, instance count changed, OR eval ran since last training
+        // Reset env only on first time OR eval ran since last training
         // (eval episodes shouldn't leak into training metrics - they use ε=0 and have higher scores)
-        const shouldResetEnv = lastTrainingNumEnvs === null || numEnvs !== lastTrainingNumEnvs || ranEvalSinceLastTraining
+        // Instance count changes are handled by resize() without resetting metrics
+        const shouldResetEnv = lastTrainingNumEnvs === null || ranEvalSinceLastTraining
         isTraining = true
         isEval = false
         visualize = msg.visualize && numEnvs <= MAX_VISUALIZED_INSTANCES

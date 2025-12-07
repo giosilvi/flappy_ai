@@ -38,8 +38,8 @@ ensureDataDir();
  * Get leaderboard file path for a specific game
  */
 function getLeaderboardFile(gameId) {
-  // Sanitize gameId to prevent path traversal
-  const sanitizedGameId = gameId.replace(/[^a-zA-Z0-9_-]/g, '');
+  // Sanitize gameId to prevent path traversal, fallback to default if empty
+  const sanitizedGameId = (gameId || DEFAULT_GAME_ID).replace(/[^a-zA-Z0-9_-]/g, '') || DEFAULT_GAME_ID;
   return path.join(DATA_DIR, `leaderboard-${sanitizedGameId}.json`);
 }
 
