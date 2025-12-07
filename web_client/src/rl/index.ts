@@ -1,14 +1,10 @@
 /**
  * RL module exports
  * 
- * New TensorFlow.js-based implementation:
+ * TensorFlow.js-based implementation:
  * - UnifiedDQN: Main entry point for all DQN operations
  * - TFDQNAgent: TensorFlow.js-based DQN agent
  * - tfTraining.worker: Training worker with TF.js
- * 
- * Legacy (kept for backwards compatibility during transition):
- * - WorkerDQNAgent: Custom neural network agent
- * - TrainingLoop: Old training orchestration
  */
 
 // ===== New TensorFlow.js Implementation =====
@@ -42,6 +38,15 @@ export {
 // ===== Shared Components =====
 export { ReplayBuffer, type Transition } from './ReplayBuffer'
 
+export {
+  type IVectorizedEnv,
+  type VectorizedStepResult,
+  type EpisodeStats,
+  type BaseGameState,
+  type BaseRewardConfig,
+  type EnvFactory,
+} from './IVectorizedEnv'
+
 export { 
   type TrainingMetrics, 
   type AutoEvalResult, 
@@ -54,12 +59,7 @@ export {
   DefaultMetricsConfig,
 } from './types'
 
-// ===== Legacy Implementation (for backwards compatibility) =====
-export { NeuralNetwork, createDQNNetwork, createNetworkPair, type NetworkConfig } from './NeuralNetwork'
-export { WorkerDQNAgent, DefaultDQNConfig, type DQNConfig } from './WorkerDQNAgent'
-export { TrainingLoop, type TrainingCallbacks } from './TrainingLoop'
-
-// Network visualization type (used by both old and new implementations)
+// Network visualization type
 export interface NetworkVisualization {
   activations: number[][]
   qValues: number[]

@@ -142,6 +142,10 @@ export default defineComponent({
       type: String,
       default: '6→64→64→2',
     },
+    gameId: {
+      type: String,
+      default: 'flappy',
+    },
   },
   emits: ['close', 'submit'],
   data() {
@@ -183,7 +187,7 @@ export default defineComponent({
     async loadLeaderboard() {
       this.isLoading = true
       try {
-        const response = await apiClient.getLeaderboard(10)
+        const response = await apiClient.getLeaderboard(this.gameId, 10)
         this.entries = response.entries
         this.champion = response.champion || null
       } catch (error) {
@@ -202,7 +206,8 @@ export default defineComponent({
           pipes: this.pendingScore,
           params: this.pendingParams,
           architecture: this.pendingArchitecture,
-        })
+          gameId: this.gameId,
+        }, this.gameId)
 
         if (response.success) {
           this.lastSubmittedScore = this.pendingScore

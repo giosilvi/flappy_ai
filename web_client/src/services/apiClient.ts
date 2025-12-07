@@ -8,6 +8,9 @@ const REFERENCE_PARAMS = 8706
 // API base URL - use relative path in production (Caddy proxies /api to backend)
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
+// Default game ID for backwards compatibility
+const DEFAULT_GAME_ID = 'flappy'
+
 export interface LeaderboardEntry {
   id: string
   name: string
@@ -18,6 +21,7 @@ export interface LeaderboardEntry {
   createdAt: string
   isChampion?: boolean
   isYou?: boolean
+  gameId?: string         // Game identifier
 }
 
 /**
@@ -48,6 +52,7 @@ export interface SubmitScoreRequest {
   pipes: number           // Raw pipes passed
   params: number          // Network parameters
   architecture: string
+  gameId?: string         // Optional game identifier
 }
 
 export interface SubmitScoreResponse {
@@ -65,10 +70,12 @@ class ApiClient {
 
   /**
    * Get leaderboard entries from server
+   * @param gameId - Game identifier (defaults to 'flappy')
+   * @param limit - Maximum number of entries to return
    */
-  async getLeaderboard(limit: number = 10): Promise<LeaderboardResponse> {
+  async getLeaderboard(gameId: string = DEFAULT_GAME_ID, limit: number = 10): Promise<LeaderboardResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/leaderboard?limit=${limit}`)
+      const response = await fetch(`${this.baseUrl}/leaderboard?gameId=${encodeURIComponent(gameId)}&limit=${limit}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -82,8 +89,10 @@ class ApiClient {
 
   /**
    * Submit a new score to the leaderboard (saves to server)
+   * @param request - Score submission request
+   * @param gameId - Game identifier (defaults to 'flappy')
    */
-  async submitScore(request: SubmitScoreRequest): Promise<SubmitScoreResponse> {
+  async submitScore(request: SubmitScoreRequest, gameId: string = DEFAULT_GAME_ID): Promise<SubmitScoreResponse> {
     // Calculate efficiency-adjusted score
     const adjustedScore = calculateAdjustedScore(request.pipes, request.params)
 
@@ -99,6 +108,7 @@ class ApiClient {
           params: request.params,
           architecture: request.architecture,
           score: adjustedScore,
+          gameId: request.gameId || gameId,
         }),
       })
 
@@ -125,6 +135,7 @@ class ApiClient {
           params: request.params,
           architecture: request.architecture,
           createdAt: new Date().toISOString(),
+          gameId,
         },
         isNewChampion: false,
       }
@@ -133,10 +144,11 @@ class ApiClient {
 
   /**
    * Get the lowest score on the leaderboard (or 0 if empty/less than 10 entries)
+   * @param gameId - Game identifier (defaults to 'flappy')
    */
-  async getLowestScore(): Promise<number> {
+  async getLowestScore(gameId: string = DEFAULT_GAME_ID): Promise<number> {
     try {
-      const response = await fetch(`${this.baseUrl}/leaderboard/lowest`)
+      const response = await fetch(`${this.baseUrl}/leaderboard/lowest?gameId=${encodeURIComponent(gameId)}`)
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -154,7 +166,3 @@ export const apiClient = new ApiClient()
 
 // Export class for custom instantiation
 export { ApiClient }
-
-
-
-

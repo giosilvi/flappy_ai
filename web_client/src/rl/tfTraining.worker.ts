@@ -3,9 +3,10 @@
  * Runs DQN training in a separate thread with vectorized environments
  */
 
-import { VectorizedEnv, MAX_VISUALIZED_INSTANCES } from '../game/VectorizedEnv'
-import { DefaultRewardConfig, DefaultObservationConfig, type RewardConfig } from '../game/config'
-import type { RawGameState } from '../game/GameState'
+import { MAX_VISUALIZED_INSTANCES } from '../games/flappy/VectorizedEnv'
+import { DefaultRewardConfig as FlappyDefaultRewardConfig } from '../games/flappy/config'
+import type { BaseGameState, BaseRewardConfig, IVectorizedEnv } from './IVectorizedEnv'
+import { getGame, DEFAULT_GAME_ID } from '../games'
 import { TFDQNAgent, type TFDQNConfig, DefaultTFDQNConfig } from './TFDQNAgent'
 import { ReplayBuffer } from './ReplayBuffer'
 import { 
@@ -19,7 +20,7 @@ import { initBestBackend, type BackendType } from './backendUtils'
 // ===== Message Types =====
 
 type WorkerMessage =
-  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto' }
+  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string }
   | { type: 'setNumEnvs'; count: number }
   | { type: 'startTraining'; visualize: boolean }
   | { type: 'stopTraining' }
@@ -34,14 +35,14 @@ type WorkerMessage =
   | { type: 'setLearningRate'; value: number }
   | { type: 'setLRScheduler'; enabled: boolean }
   | { type: 'setGamma'; value: number }
-  | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
+  | { type: 'setRewardConfig'; config: Partial<Record<string, number>> }
   | { type: 'reset' }
   | { type: 'setAutoEval'; enabled: boolean; trials?: number; interval?: number }
 
 type WorkerResponse =
   | { type: 'ready'; backend: BackendType }
   | { type: 'metrics'; data: TrainingMetrics }
-  | { type: 'gameStates'; states: RawGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
+  | { type: 'gameStates'; states: BaseGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
   | { type: 'weights'; data: { layerWeights: number[][][] } }
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'weightHealth'; data: WeightHealthMetrics }
@@ -52,12 +53,13 @@ type WorkerResponse =
 // ===== Worker State =====
 
 let agent: TFDQNAgent | null = null
-let env: VectorizedEnv | null = null
+let env: IVectorizedEnv<BaseGameState, BaseRewardConfig> | null = null
 let buffer: ReplayBuffer | null = null
 let metricsCollector: MetricsCollector | null = null
 let config: TFDQNConfig = { ...DefaultTFDQNConfig }
-let rewardConfig: RewardConfig = { ...DefaultRewardConfig }
+let rewardConfig: Record<string, number> = { ...FlappyDefaultRewardConfig }
 let currentBackend: BackendType = 'cpu'
+let currentGameId: string = DEFAULT_GAME_ID
 
 // Training state
 let isTraining = false
@@ -154,7 +156,8 @@ function applyScaling(currentNumEnvs: number): void {
 async function initialize(
   agentConfig: Partial<TFDQNConfig>,
   initialNumEnvs: number,
-  backend: BackendType | 'auto'
+  backend: BackendType | 'auto',
+  gameId: string = DEFAULT_GAME_ID
 ): Promise<void> {
   try {
     // Initialize TensorFlow.js backend
@@ -162,8 +165,26 @@ async function initialize(
     currentBackend = backendInfo.name
     console.log(`[TFWorker] TF.js initialized with backend: ${currentBackend}`)
 
-    // Store config and bases for scaling
-    config = { ...DefaultTFDQNConfig, ...agentConfig }
+    // Track current game
+    currentGameId = gameId || DEFAULT_GAME_ID
+
+    // Resolve game module FIRST to get input/output dimensions
+    const resolvedGameId = currentGameId || DEFAULT_GAME_ID
+    const gameModule = getGame(resolvedGameId) || getGame(DEFAULT_GAME_ID)
+    if (!gameModule) {
+      throw new Error(`Game module not found for id: ${resolvedGameId}`)
+    }
+
+    // Get game-specific dimensions from registry
+    const { inputDim, outputDim } = gameModule.info
+
+    // Store config with game-specific dimensions and bases for scaling
+    config = {
+      ...DefaultTFDQNConfig,
+      inputDim,
+      actionDim: outputDim,
+      ...agentConfig,  // User config can still override if needed
+    }
     numEnvs = initialNumEnvs
     baseEpsilonDecaySteps = config.epsilonDecaySteps
     baseBufferSize = config.bufferSize
@@ -173,11 +194,15 @@ async function initialize(
     // Scale hyperparameters based on env count
     applyScaling(numEnvs)
 
-    // Create agent
+    // Create agent with game-specific dimensions
     agent = new TFDQNAgent(config)
 
-    // Create vectorized environment
-    env = new VectorizedEnv(numEnvs, rewardConfig, DefaultObservationConfig)
+    // Initialize reward config from game defaults
+    const defaultRewards = gameModule.defaultRewardConfig || FlappyDefaultRewardConfig
+    rewardConfig = { ...defaultRewards }
+
+    // Create vectorized environment via registry
+    env = gameModule.createEnv(numEnvs, rewardConfig) as IVectorizedEnv<BaseGameState, BaseRewardConfig>
 
     // Create replay buffer
     buffer = new ReplayBuffer(bufferCapacity)
@@ -621,7 +646,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (msg.type) {
       case 'init':
-        await initialize(msg.config, msg.numEnvs, msg.backend)
+        await initialize(msg.config, msg.numEnvs, msg.backend, msg.gameId || DEFAULT_GAME_ID)
         break
 
       case 'setNumEnvs':
@@ -758,8 +783,17 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         break
 
       case 'setRewardConfig':
-        rewardConfig = { ...rewardConfig, ...msg.config }
-        env?.setRewardConfig(msg.config)
+        {
+          // Filter out undefined values to satisfy Record<string, number>
+          const sanitized: Record<string, number> = { ...rewardConfig }
+          for (const [key, value] of Object.entries(msg.config)) {
+            if (typeof value === 'number') {
+              sanitized[key] = value
+            }
+          }
+          rewardConfig = sanitized
+          env?.setRewardConfig(sanitized)
+        }
         break
 
       case 'setAutoEval':

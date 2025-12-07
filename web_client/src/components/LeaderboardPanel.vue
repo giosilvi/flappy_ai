@@ -51,12 +51,26 @@ import { apiClient, type LeaderboardEntry } from '@/services/apiClient'
 
 export default defineComponent({
   name: 'LeaderboardPanel',
+  props: {
+    gameId: {
+      type: String,
+      default: 'flappy',
+    },
+  },
   data() {
     return {
       entries: [] as LeaderboardEntry[],
       champion: null as LeaderboardEntry | null,
       isLoading: false,
     }
+  },
+  watch: {
+    gameId: {
+      handler() {
+        this.loadLeaderboard()
+      },
+      immediate: false,
+    },
   },
   mounted() {
     this.loadLeaderboard()
@@ -65,7 +79,7 @@ export default defineComponent({
     async loadLeaderboard() {
       this.isLoading = true
       try {
-        const response = await apiClient.getLeaderboard(5)
+        const response = await apiClient.getLeaderboard(this.gameId, 5)
         this.entries = response.entries
         this.champion = response.champion || null
       } catch (error) {
