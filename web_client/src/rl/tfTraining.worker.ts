@@ -67,6 +67,8 @@ let numEnvs = 1
 let autoRestartEval = false
 let frameLimitEnabled = false
 let lastFrameTime = 0
+let lastTrainingNumEnvs: number | null = null
+let ranEvalSinceLastTraining = false  // Track if eval ran since last training (to force env reset)
 const FRAME_INTERVAL_MS = 1000 / 30
 
 // Auto-eval state
@@ -639,6 +641,9 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
           self.postMessage({ type: 'error', message: 'Not initialized' } as WorkerResponse)
           return
         }
+        // Always reset env if: first time, instance count changed, OR eval ran since last training
+        // (eval episodes shouldn't leak into training metrics - they use ε=0 and have higher scores)
+        const shouldResetEnv = lastTrainingNumEnvs === null || numEnvs !== lastTrainingNumEnvs || ranEvalSinceLastTraining
         isTraining = true
         isEval = false
         visualize = msg.visualize && numEnvs <= MAX_VISUALIZED_INSTANCES
@@ -652,10 +657,14 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
             collector.recordEpisode(stats.reward, stats.length, stats.score)
           })
         }
-        env.resetAll()
+        if (shouldResetEnv) {
+          env.resetAll()
+        }
         lastMetricsTime = performance.now()
         lastStatesTime = performance.now()
         lastNetworkVizTime = 0  // Reset to trigger immediate emit
+        lastTrainingNumEnvs = numEnvs
+        ranEvalSinceLastTraining = false  // Clear flag now that training is starting
         runTrainingBatch()
         break
 
@@ -670,6 +679,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         }
         isEval = true
         isTraining = false
+        ranEvalSinceLastTraining = true  // Mark that eval ran (forces env reset on next training start)
         autoRestartEval = msg.autoRestart
         lastFrameTime = performance.now()
 
