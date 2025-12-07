@@ -29,11 +29,11 @@ import {
   GameConfig as FlappyGameConfig,
   MAX_VISUALIZED_INSTANCES,
   type GameAction,
-  type RawGameState,
 } from '@/games/flappy'
 import { 
   UnifiedDQN, 
   type BackendType,
+  type BaseGameState,
 } from '@/rl'
 import { getGame, DEFAULT_GAME_ID } from '@/games'
 
@@ -329,7 +329,7 @@ export default defineComponent({
       }
     },
 
-    renderTiledStates(states: RawGameState[], rewards?: number[], cumulativeRewards?: number[]) {
+    renderTiledStates(states: BaseGameState[], rewards?: number[], cumulativeRewards?: number[]) {
       if (!this.tiledRenderer || !this.canVisualize) return
       // Don't show rewards during eval mode - only during training
       if (this.mode === 'eval') {
@@ -444,7 +444,7 @@ export default defineComponent({
       const state = this.engine.getState()
       const showMessage = this.mode === 'idle' && !this.isRunning
 
-      this.singleRenderer.render(state as RawGameState, showMessage)
+      this.singleRenderer.render(state as BaseGameState, showMessage)
     },
 
     // ===== Training Mode =====

@@ -86,9 +86,8 @@
           @restartEval="restartEval"
         />
 
-        <!-- Neural network visualization (only for low instance counts) -->
+        <!-- Neural network visualization (always visible; shows placeholder in fast mode) -->
         <NetworkViewer
-          v-if="numInstances <= 16"
           :activations="networkActivations"
           :qValues="qValues"
           :selectedAction="selectedAction"

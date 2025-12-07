@@ -5,6 +5,45 @@
       <span class="header-info">{{ networkInfo }}</span>
     </div>
 
+    <!-- Weight Health Indicator (now above network viz) -->
+    <div 
+      class="weight-health" 
+      v-if="weightHealthStatus.status !== 'idle'"
+      title="Weight Health shows how the neural network weights are changing during training.&#10;&#10;Status:&#10;• Learning - Weights are being updated normally&#10;• Converging - Weights are decreasing (approaching optimum)&#10;• Exploring - Weights are increasing (finding new solutions)&#10;• Plateau - Weights barely changing (may be stuck)&#10;• Unstable - Weights oscillating (learning rate may be too high)&#10;&#10;Δ Rate: Magnitude of weight changes per second&#10;Stability: How consistent the update direction is (5 = stable)"
+    >
+      <div class="health-header">
+        <span class="health-label">Weight Health</span>
+        <span class="health-status" :class="weightHealthStatus.status">{{ weightHealthStatus.statusText }}</span>
+      </div>
+      <div class="health-metrics">
+        <div class="health-metric">
+          <span class="metric-label">Δ Rate</span>
+          <div class="delta-bar">
+            <div class="delta-fill" :style="{ width: `${Math.min(100, weightHealthStatus.deltaRate * 1000)}%` }"></div>
+          </div>
+          <span class="metric-value">{{ weightHealthStatus.deltaRate.toExponential(1) }}</span>
+        </div>
+        <div class="health-metric">
+          <span class="metric-label">Stability</span>
+          <div class="stability-dots">
+            <span v-for="i in 5" :key="i" class="stability-dot" :class="{ filled: i <= weightHealthStatus.stability }">●</span>
+          </div>
+        </div>
+      </div>
+      <div class="delta-sparkline">
+        <svg class="sparkline-svg" viewBox="0 0 100 20" preserveAspectRatio="none">
+          <polyline 
+            :points="sparklinePoints" 
+            fill="none" 
+            :stroke="sparklineColor" 
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
+    </div>
+
+
     <!-- Fast mode placeholder for SVG -->
     <div v-if="fastMode" class="svg-placeholder">
       <span class="placeholder-icon">⚡</span>
@@ -145,44 +184,6 @@
         </g>
       </g>
     </svg>
-
-    <!-- Weight Health Indicator -->
-    <div 
-      class="weight-health" 
-      v-if="weightHealthStatus.status !== 'idle'"
-      title="Weight Health shows how the neural network weights are changing during training.&#10;&#10;Status:&#10;• Learning - Weights are being updated normally&#10;• Converging - Weight updates are decreasing (approaching optimum)&#10;• Exploring - Weight updates are increasing (finding new solutions)&#10;• Plateau - Weights barely changing (may be stuck)&#10;• Unstable - Weights oscillating (learning rate may be too high)&#10;&#10;Δ Rate: Magnitude of weight changes per second&#10;Stability: How consistent the update direction is (5 = stable)"
-    >
-      <div class="health-header">
-        <span class="health-label">Weight Health</span>
-        <span class="health-status" :class="weightHealthStatus.status">{{ weightHealthStatus.statusText }}</span>
-      </div>
-      <div class="health-metrics">
-        <div class="health-metric">
-          <span class="metric-label">Δ Rate</span>
-          <div class="delta-bar">
-            <div class="delta-fill" :style="{ width: `${Math.min(100, weightHealthStatus.deltaRate * 1000)}%` }"></div>
-          </div>
-          <span class="metric-value">{{ weightHealthStatus.deltaRate.toExponential(1) }}</span>
-        </div>
-        <div class="health-metric">
-          <span class="metric-label">Stability</span>
-          <div class="stability-dots">
-            <span v-for="i in 5" :key="i" class="stability-dot" :class="{ filled: i <= weightHealthStatus.stability }">●</span>
-          </div>
-        </div>
-      </div>
-      <div class="delta-sparkline">
-        <svg class="sparkline-svg" viewBox="0 0 100 20" preserveAspectRatio="none">
-          <polyline 
-            :points="sparklinePoints" 
-            fill="none" 
-            :stroke="sparklineColor" 
-            stroke-width="1.5"
-            stroke-linejoin="round"
-          />
-        </svg>
-      </div>
-    </div>
   </div>
 </template>
 
