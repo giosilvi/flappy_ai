@@ -31,9 +31,6 @@ function ensureDataDir() {
   }
 }
 
-// Initialize data directory on module load (can be overridden later)
-ensureDataDir();
-
 /**
  * Get leaderboard file path for a specific game
  */
@@ -125,9 +122,15 @@ app.get('/api/leaderboard', (req, res) => {
 app.post('/api/leaderboard', (req, res) => {
   const { name, pipes, params, architecture, score, gameId: bodyGameId } = req.body;
   const gameId = bodyGameId || DEFAULT_GAME_ID;
+  const parsedScore = Number(score);
   
-  if (!name || typeof pipes !== 'number' || typeof params !== 'number') {
-    return res.status(400).json({ error: 'Missing required fields: name, pipes, params' });
+  const hasValidName = typeof name === 'string' && name.trim().length > 0;
+  const hasValidPipes = typeof pipes === 'number' && Number.isFinite(pipes);
+  const hasValidParams = typeof params === 'number' && Number.isFinite(params);
+  const hasValidScore = Number.isFinite(parsedScore);
+
+  if (!hasValidName || !hasValidScore || !hasValidPipes || !hasValidParams) {
+    return res.status(400).json({ error: 'Missing or invalid fields: name, score, pipes, params' });
   }
   
   const data = getLeaderboard(gameId);
@@ -136,7 +139,7 @@ app.post('/api/leaderboard', (req, res) => {
   const newEntry = {
     id: `entry-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
     name: name.trim().substring(0, 20), // Limit name length
-    score: score, // Pre-calculated adjusted score from client
+    score: parsedScore, // Pre-calculated adjusted score from client
     pipes,
     params,
     architecture: architecture || 'unknown',
@@ -147,7 +150,7 @@ app.post('/api/leaderboard', (req, res) => {
   // Check if this is a new champion
   const sortedEntries = [...data.entries].sort((a, b) => b.score - a.score);
   const currentChampion = sortedEntries[0];
-  const isNewChampion = !currentChampion || score > currentChampion.score;
+  const isNewChampion = !currentChampion || parsedScore > currentChampion.score;
   
   // Add new entry
   data.entries.push(newEntry);

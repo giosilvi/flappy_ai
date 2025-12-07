@@ -1100,12 +1100,14 @@ var TiledRenderer = class {
   }
   /**
    * Scale score digits based on number of tiles:
-   * 1 tile -> 1.0, 4 tiles -> 1.1, 16 tiles -> 1.25
+   * linearly grows from 1.0 (1 tile) to 2.0 (16+ tiles)
    */
   getScoreScale() {
     if (this.numInstances <= 1) return 1;
-    if (this.numInstances <= 4) return 1.1;
-    return 1.25;
+    const capped = Math.min(this.numInstances, 16);
+    const t = (capped - 1) / (16 - 1);
+    const scale = 1 + t;
+    return scale;
   }
   /**
    * Draw tile index label
@@ -1842,10 +1844,8 @@ var savedNumEnvsBeforeAutoEval = 1;
 var BASE_WARMUP_SIZE = 1e4;
 var MAX_BUFFER_SIZE = 1e6;
 var TARGET_SCALE_DIVISOR = 32;
-var baseEpsilonDecaySteps = DefaultTFDQNConfig.epsilonDecaySteps;
 var baseBufferSize = DefaultTFDQNConfig.bufferSize;
 var baseTargetUpdateFreq = DefaultTFDQNConfig.targetUpdateFreq;
-var baseLearningRate = DefaultTFDQNConfig.learningRate;
 var warmupSize = BASE_WARMUP_SIZE;
 var bufferCapacity = DefaultTFDQNConfig.bufferSize;
 var lastMetricsTime = 0;
@@ -1861,13 +1861,10 @@ function applyScaling(currentNumEnvs) {
   const N = Math.max(1, currentNumEnvs);
   warmupSize = BASE_WARMUP_SIZE;
   const newBufferCapacity = Math.min(baseBufferSize * N, MAX_BUFFER_SIZE);
-  config.epsilonDecaySteps = Math.max(1, Math.round(baseEpsilonDecaySteps * N));
   const targetScale = Math.max(1, N / TARGET_SCALE_DIVISOR);
   config.targetUpdateFreq = Math.max(1, Math.round(baseTargetUpdateFreq * targetScale));
-  config.learningRate = baseLearningRate / Math.sqrt(targetScale);
   if (agent) {
-    agent.setEpsilonDecaySteps(config.epsilonDecaySteps);
-    agent.setLearningRate(config.learningRate);
+    ;
     agent.config.targetUpdateFreq = config.targetUpdateFreq;
   }
   if (!buffer) {
@@ -1876,20 +1873,12 @@ function applyScaling(currentNumEnvs) {
     buffer.resize(newBufferCapacity);
   }
   bufferCapacity = newBufferCapacity;
-  if (metricsCollector) {
-    metricsCollector = new MetricsCollector({
-      emitIntervalMs: METRICS_INTERVAL,
-      warmupSize
+  if (metricsCollector && env) {
+    env.clearOnEpisodeComplete();
+    const collector = metricsCollector;
+    env.setOnEpisodeComplete((stats) => {
+      collector.recordEpisode(stats.reward, stats.length, stats.score);
     });
-    if (env) {
-      env.clearOnEpisodeComplete();
-      const collector = metricsCollector;
-      if (collector) {
-        env.setOnEpisodeComplete((stats) => {
-          collector.recordEpisode(stats.reward, stats.length, stats.score);
-        });
-      }
-    }
   }
 }
 async function initialize(agentConfig, initialNumEnvs, backend, gameId = DEFAULT_GAME_ID) {
@@ -1912,10 +1901,8 @@ async function initialize(agentConfig, initialNumEnvs, backend, gameId = DEFAULT
       // User config can still override if needed
     };
     numEnvs = initialNumEnvs;
-    baseEpsilonDecaySteps = config.epsilonDecaySteps;
     baseBufferSize = config.bufferSize;
     baseTargetUpdateFreq = config.targetUpdateFreq;
-    baseLearningRate = config.learningRate;
     applyScaling(numEnvs);
     agent = new TFDQNAgent(config);
     const defaultRewards = gameModule.defaultRewardConfig || DefaultRewardConfig;
@@ -1942,66 +1929,72 @@ async function initialize(agentConfig, initialNumEnvs, backend, gameId = DEFAULT
 function runTrainingBatch() {
   if (!isTraining || !agent || !env || !buffer || !metricsCollector) return;
   if (visualize && frameLimitEnabled) {
-    const now2 = performance.now();
-    const elapsed = now2 - lastFrameTime;
+    const now = performance.now();
+    const elapsed = now - lastFrameTime;
     if (elapsed < FRAME_INTERVAL_MS) {
       setTimeout(runTrainingBatch, FRAME_INTERVAL_MS - elapsed);
       return;
     }
-    lastFrameTime = now2;
+    lastFrameTime = now;
   }
-  const startTime = performance.now();
-  const batchSteps = visualize && frameLimitEnabled ? 1 : 512;
-  let observations = env.getObservations();
-  for (let i = 0; i < batchSteps && isTraining; i++) {
-    const actions = agent.actBatch(observations, true);
-    const result = env.stepAll(actions, true);
-    for (let j = 0; j < numEnvs; j++) {
-      buffer.add({
-        state: observations[j],
-        action: actions[j],
-        reward: result.rewards[j],
-        nextState: result.observations[j],
-        done: result.dones[j]
-      });
+  try {
+    const startTime = performance.now();
+    const batchSteps = visualize && frameLimitEnabled ? 1 : 512;
+    let observations = env.getObservations();
+    for (let i = 0; i < batchSteps && isTraining; i++) {
+      const actions = agent.actBatch(observations, true);
+      const result = env.stepAll(actions, true);
+      for (let j = 0; j < numEnvs; j++) {
+        buffer.add({
+          state: observations[j],
+          action: actions[j],
+          reward: result.rewards[j],
+          nextState: result.observations[j],
+          done: result.dones[j]
+        });
+      }
+      metricsCollector.recordSteps(numEnvs);
+      agent.recordEnvSteps(numEnvs);
+      const totalSteps = metricsCollector.getMetrics().totalSteps;
+      const bufferSize = buffer.size();
+      if (bufferSize >= warmupSize && totalSteps % TRAIN_FREQ === 0) {
+        const batch = buffer.sample(BATCH_SIZE);
+        const loss = agent.trainBatch(
+          batch.map((t) => t.state),
+          batch.map((t) => t.action),
+          batch.map((t) => t.reward),
+          batch.map((t) => t.nextState),
+          batch.map((t) => t.done)
+        );
+        metricsCollector.updateTrainingMetrics({ loss, bufferSize });
+      }
+      metricsCollector.updateTrainingMetrics({ epsilon: agent.getEpsilon() });
+      observations = result.observations;
+      const currentEpisode = metricsCollector.getMetrics().episode;
+      if (autoEvalEnabled && !isAutoEvalRunning && bufferSize >= warmupSize && currentEpisode > 0 && currentEpisode - lastAutoEvalEpisode >= autoEvalInterval) {
+        runAutoEval();
+        return;
+      }
+      if (performance.now() - startTime > 50) break;
     }
-    metricsCollector.recordSteps(numEnvs);
-    agent.recordEnvSteps(numEnvs);
-    const totalSteps = metricsCollector.getMetrics().totalSteps;
-    const bufferSize = buffer.size();
-    if (bufferSize >= warmupSize && totalSteps % TRAIN_FREQ === 0) {
-      const batch = buffer.sample(BATCH_SIZE);
-      const loss = agent.trainBatch(
-        batch.map((t) => t.state),
-        batch.map((t) => t.action),
-        batch.map((t) => t.reward),
-        batch.map((t) => t.nextState),
-        batch.map((t) => t.done)
-      );
-      metricsCollector.updateTrainingMetrics({ loss, bufferSize });
+    const now = performance.now();
+    if (now - lastMetricsTime >= METRICS_INTERVAL) {
+      emitMetrics();
+      emitWeightHealth();
+      lastMetricsTime = now;
     }
-    metricsCollector.updateTrainingMetrics({ epsilon: agent.getEpsilon() });
-    observations = result.observations;
-    const currentEpisode = metricsCollector.getMetrics().episode;
-    if (autoEvalEnabled && !isAutoEvalRunning && bufferSize >= warmupSize && currentEpisode > 0 && currentEpisode - lastAutoEvalEpisode >= autoEvalInterval) {
-      runAutoEval();
-      return;
+    if (visualize && numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
+      emitGameStates();
+      lastStatesTime = now;
     }
-    if (performance.now() - startTime > 50) break;
-  }
-  const now = performance.now();
-  if (now - lastMetricsTime >= METRICS_INTERVAL) {
-    emitMetrics();
-    emitWeightHealth();
-    lastMetricsTime = now;
-  }
-  if (visualize && numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
-    emitGameStates();
-    lastStatesTime = now;
-  }
-  if (visualize && numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
-    emitNetworkViz();
-    lastNetworkVizTime = now;
+    if (visualize && numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+      emitNetworkViz();
+      lastNetworkVizTime = now;
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error("[TFWorker] Training batch error:", errorMsg);
+    self.postMessage({ type: "error", message: `Training error: ${errorMsg}` });
   }
   if (isTraining) {
     setTimeout(runTrainingBatch, 0);
@@ -2010,35 +2003,41 @@ function runTrainingBatch() {
 function runEvalBatch() {
   if (!isEval || !agent || !env) return;
   if (visualize && frameLimitEnabled) {
-    const now2 = performance.now();
-    const elapsed = now2 - lastFrameTime;
+    const now = performance.now();
+    const elapsed = now - lastFrameTime;
     if (elapsed < FRAME_INTERVAL_MS) {
       setTimeout(runEvalBatch, FRAME_INTERVAL_MS - elapsed);
       return;
     }
-    lastFrameTime = now2;
+    lastFrameTime = now;
   }
-  const startTime = performance.now();
-  const batchSteps = visualize && frameLimitEnabled ? 1 : 64;
-  let observations = env.getObservations();
-  for (let i = 0; i < batchSteps && isEval; i++) {
-    if (!autoRestartEval && env.countActive() === 0) {
-      finishEval();
-      return;
+  try {
+    const startTime = performance.now();
+    const batchSteps = visualize && frameLimitEnabled ? 1 : 64;
+    let observations = env.getObservations();
+    for (let i = 0; i < batchSteps && isEval; i++) {
+      if (!autoRestartEval && env.countActive() === 0) {
+        finishEval();
+        return;
+      }
+      const actions = agent.actBatch(observations, false);
+      const result = env.stepAll(actions, autoRestartEval);
+      observations = result.observations;
+      if (performance.now() - startTime > 30) break;
     }
-    const actions = agent.actBatch(observations, false);
-    const result = env.stepAll(actions, autoRestartEval);
-    observations = result.observations;
-    if (performance.now() - startTime > 30) break;
-  }
-  const now = performance.now();
-  if (numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
-    emitGameStates();
-    lastStatesTime = now;
-  }
-  if (numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
-    emitNetworkViz();
-    lastNetworkVizTime = now;
+    const now = performance.now();
+    if (numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
+      emitGameStates();
+      lastStatesTime = now;
+    }
+    if (numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+      emitNetworkViz();
+      lastNetworkVizTime = now;
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error("[TFWorker] Eval batch error:", errorMsg);
+    self.postMessage({ type: "error", message: `Eval error: ${errorMsg}` });
   }
   if (isEval) {
     setTimeout(runEvalBatch, 0);
@@ -2225,7 +2224,7 @@ self.onmessage = async (e) => {
           self.postMessage({ type: "error", message: "Not initialized" });
           return;
         }
-        const shouldResetEnv = lastTrainingNumEnvs === null || numEnvs !== lastTrainingNumEnvs || ranEvalSinceLastTraining;
+        const shouldResetEnv = lastTrainingNumEnvs === null || ranEvalSinceLastTraining;
         isTraining = true;
         isEval = false;
         visualize = msg.visualize && numEnvs <= MAX_VISUALIZED_INSTANCES;
@@ -2336,7 +2335,6 @@ self.onmessage = async (e) => {
         if (typeof msg.trials === "number" && msg.trials > 0) {
           autoEvalTrials = Math.min(msg.trials, 64);
         }
-        lastAutoEvalEpisode = 0;
         console.log(
           `[TFWorker] Auto-eval ${autoEvalEnabled ? "enabled" : "disabled"} (every ${autoEvalInterval} eps, ${autoEvalTrials} trials)`
         );
