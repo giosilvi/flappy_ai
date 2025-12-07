@@ -11,8 +11,8 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Data file path - persisted in a volume
-const DATA_DIR = process.env.DATA_DIR || './data';
+// Data file path - persisted in a volume (mutable for tests)
+let DATA_DIR = process.env.DATA_DIR || './data';
 
 // Default game ID for backwards compatibility
 const DEFAULT_GAME_ID = 'flappy';
@@ -25,9 +25,14 @@ app.use(cors());
 app.use(express.json());
 
 // Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
 }
+
+// Initialize data directory on module load (can be overridden later)
+ensureDataDir();
 
 /**
  * Get leaderboard file path for a specific game
@@ -189,7 +194,26 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.listen(PORT, () => {
-  console.log(`🏆 Leaderboard API running on port ${PORT}`);
-  console.log(`   Data stored in: ${DATA_DIR}`);
-});
+/**
+ * Start the HTTP server.
+ * Exposed for testing so we can spin up an isolated instance.
+ */
+function startServer(port = PORT, dataDir = DATA_DIR) {
+  DATA_DIR = dataDir;
+  ensureDataDir();
+  const server = app.listen(port, () => {
+    console.log(`🏆 Leaderboard API running on port ${server.address().port}`);
+    console.log(`   Data stored in: ${DATA_DIR}`);
+  });
+  return server;
+}
+
+// Only start automatically when running directly, not when imported (e.g., tests)
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  startServer,
+};

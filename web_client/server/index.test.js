@@ -1,190 +1,145 @@
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { startServer } from './index.js'
+
+let server
+let baseUrl
+let dataDir
+
 /**
- * Tests for the Leaderboard API
- * Run with: npm test
+ * Simple helper around fetch
  */
+async function request(method, route, body) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
 
-const assert = require('assert');
-const http = require('http');
+  const text = await response.text()
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    data = text
+  }
 
-const API_BASE = process.env.API_URL || 'http://localhost:3001';
-
-// Helper to make HTTP requests
-function request(method, path, body = null) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(path, API_BASE);
-    const options = {
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname + url.search,
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    };
-
-    const req = http.request(options, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode, data: JSON.parse(data) });
-        } catch {
-          resolve({ status: res.statusCode, data });
-        }
-      });
-    });
-
-    req.on('error', reject);
-    
-    if (body) {
-      req.write(JSON.stringify(body));
-    }
-    req.end();
-  });
+  return { status: response.status, data }
 }
 
-async function runTests() {
-  console.log('🧪 Running Leaderboard API Tests...\n');
-  let passed = 0;
-  let failed = 0;
+beforeAll(async () => {
+  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'leaderboard-test-'))
+  server = startServer(0, dataDir)
 
-  // Test 1: Health check
-  try {
-    const res = await request('GET', '/api/health');
-    assert.strictEqual(res.status, 200, 'Health check should return 200');
-    assert.strictEqual(res.data.status, 'ok', 'Health check should return status ok');
-    console.log('✅ Test 1: Health check passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 1: Health check failed -', e.message);
-    failed++;
-  }
+  // Wait for the server to actually start
+  await new Promise((resolve) => server.on('listening', resolve))
+  const { port } = server.address()
+  baseUrl = `http://127.0.0.1:${port}/api`
+})
 
-  // Test 2: Get empty leaderboard
-  try {
-    const res = await request('GET', '/api/leaderboard?limit=10');
-    assert.strictEqual(res.status, 200, 'Get leaderboard should return 200');
-    assert(Array.isArray(res.data.entries), 'Entries should be an array');
-    console.log('✅ Test 2: Get leaderboard passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 2: Get leaderboard failed -', e.message);
-    failed++;
-  }
+afterAll(async () => {
+  await new Promise((resolve, reject) =>
+    server.close((err) => (err ? reject(err) : resolve()))
+  )
+  fs.rmSync(dataDir, { recursive: true, force: true })
+})
 
-  // Test 3: Submit a score
-  const testEntry = {
-    name: 'TestBot',
-    pipes: 10,
-    params: 8706,
-    architecture: '6→64→64→2',
-    score: 10.0,
-  };
-  
-  try {
-    const res = await request('POST', '/api/leaderboard', testEntry);
-    assert.strictEqual(res.status, 200, 'Submit should return 200');
-    assert.strictEqual(res.data.success, true, 'Submit should succeed');
-    assert(res.data.entry, 'Should return the entry');
-    assert.strictEqual(res.data.entry.name, 'TestBot', 'Entry name should match');
-    assert.strictEqual(res.data.entry.pipes, 10, 'Entry pipes should match');
-    console.log('✅ Test 3: Submit score passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 3: Submit score failed -', e.message);
-    failed++;
-  }
+describe('Leaderboard API', () => {
+  it('responds to health check', async () => {
+    const res = await request('GET', '/health')
+    expect(res.status).toBe(200)
+    expect(res.data.status).toBe('ok')
+  })
 
-  // Test 4: Verify entry appears in leaderboard
-  try {
-    const res = await request('GET', '/api/leaderboard?limit=10');
-    assert.strictEqual(res.status, 200, 'Get leaderboard should return 200');
-    const testBotEntry = res.data.entries.find(e => e.name === 'TestBot');
-    assert(testBotEntry, 'TestBot should be in leaderboard');
-    console.log('✅ Test 4: Entry appears in leaderboard passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 4: Entry appears in leaderboard failed -', e.message);
-    failed++;
-  }
+  it('returns an empty leaderboard for a new game', async () => {
+    const res = await request('GET', '/leaderboard?gameId=flappy&limit=5')
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.data.entries)).toBe(true)
+    expect(res.data.entries.length).toBe(0)
+    expect(res.data.champion ?? null).toBe(null)
+  })
 
-  // Test 5: Submit higher score becomes champion
-  const betterEntry = {
-    name: 'ChampionBot',
-    pipes: 50,
-    params: 8706,
-    architecture: '6→64→64→2',
-    score: 50.0,
-  };
-  
-  try {
-    const res = await request('POST', '/api/leaderboard', betterEntry);
-    assert.strictEqual(res.status, 200, 'Submit should return 200');
-    assert.strictEqual(res.data.isNewChampion, true, 'Should be new champion');
-    console.log('✅ Test 5: New champion detection passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 5: New champion detection failed -', e.message);
-    failed++;
-  }
+  it('accepts a score submission and marks champion', async () => {
+    const submission = {
+      name: 'TestBot',
+      pipes: 10,
+      params: 8706,
+      architecture: '6→64→64→2',
+      score: 10,
+      gameId: 'flappy',
+    }
 
-  // Test 6: Get lowest score threshold
-  try {
-    const res = await request('GET', '/api/leaderboard/lowest');
-    assert.strictEqual(res.status, 200, 'Get lowest should return 200');
-    assert(typeof res.data.lowestScore === 'number', 'Should return a number');
-    console.log('✅ Test 6: Get lowest score passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 6: Get lowest score failed -', e.message);
-    failed++;
-  }
+    const res = await request('POST', '/leaderboard', submission)
+    expect(res.status).toBe(200)
+    expect(res.data.success).toBe(true)
+    expect(res.data.entry.name).toBe('TestBot')
+    expect(res.data.entry.gameId).toBe('flappy')
+    expect(res.data.isNewChampion).toBe(true)
+  })
 
-  // Test 7: Validate required fields
-  try {
-    const res = await request('POST', '/api/leaderboard', { name: 'NoData' });
-    assert.strictEqual(res.status, 400, 'Should return 400 for missing fields');
-    console.log('✅ Test 7: Validation passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 7: Validation failed -', e.message);
-    failed++;
-  }
+  it('lists submitted scores with champion flag', async () => {
+    const res = await request('GET', '/leaderboard?gameId=flappy&limit=10')
+    expect(res.status).toBe(200)
+    const testBotEntry = res.data.entries.find((e) => e.name === 'TestBot')
+    expect(testBotEntry).toBeDefined()
+    expect(res.data.champion.name).toBe('TestBot')
+    expect(res.data.champion.isChampion).toBe(true)
+  })
 
-  // Test 8: Name length limit
-  try {
+  it('detects a new champion when a higher score is submitted', async () => {
+    const betterSubmission = {
+      name: 'ChampionBot',
+      pipes: 50,
+      params: 8706,
+      architecture: '6→64→64→2',
+      score: 50,
+      gameId: 'flappy',
+    }
+
+    const res = await request('POST', '/leaderboard', betterSubmission)
+    expect(res.status).toBe(200)
+    expect(res.data.isNewChampion).toBe(true)
+  })
+
+  it('validates required fields', async () => {
+    const res = await request('POST', '/leaderboard', { name: 'NoData' })
+    expect(res.status).toBe(400)
+  })
+
+  it('enforces name length limit and per-game isolation', async () => {
     const longNameEntry = {
       name: 'ThisIsAVeryLongNameThatShouldBeTruncated',
       pipes: 5,
       params: 8706,
       architecture: '6→64→64→2',
-      score: 5.0,
-    };
-    const res = await request('POST', '/api/leaderboard', longNameEntry);
-    assert.strictEqual(res.status, 200, 'Submit should return 200');
-    assert(res.data.entry.name.length <= 20, 'Name should be truncated to 20 chars');
-    console.log('✅ Test 8: Name length limit passed');
-    passed++;
-  } catch (e) {
-    console.log('❌ Test 8: Name length limit failed -', e.message);
-    failed++;
-  }
+      score: 5,
+      gameId: 'flappy-alt',
+    }
 
-  // Summary
-  console.log('\n' + '═'.repeat(50));
-  console.log(`📊 Results: ${passed} passed, ${failed} failed`);
-  console.log('═'.repeat(50));
+    const res = await request('POST', '/leaderboard', longNameEntry)
+    expect(res.status).toBe(200)
+    expect(res.data.entry.name.length).toBeLessThanOrEqual(20)
+    expect(res.data.entry.gameId).toBe('flappy-alt')
 
-  if (failed > 0) {
-    process.exit(1);
-  }
-}
+    // flappy-alt leaderboard should be independent from flappy
+    const altBoard = await request(
+      'GET',
+      '/leaderboard?gameId=flappy-alt&limit=5'
+    )
+    expect(altBoard.data.entries[0].name).toContain('ThisIsAVeryLongName')
 
-// Run tests
-runTests().catch(err => {
-  console.error('❌ Test runner error:', err);
-  process.exit(1);
-});
+    const defaultBoard = await request('GET', '/leaderboard?gameId=flappy')
+    const inDefault = defaultBoard.data.entries.find(
+      (e) => e.name === longNameEntry.name
+    )
+    expect(inDefault).toBeUndefined()
+  })
 
-
-
+  it('returns lowest score threshold (0 when fewer than 10 entries)', async () => {
+    const res = await request('GET', '/leaderboard/lowest?gameId=flappy')
+    expect(res.status).toBe(200)
+    expect(res.data.lowestScore).toBe(0)
+  })
+})
