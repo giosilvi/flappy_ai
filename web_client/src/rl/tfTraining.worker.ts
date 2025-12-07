@@ -800,7 +800,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         if (typeof msg.trials === 'number' && msg.trials > 0) {
           autoEvalTrials = Math.min(msg.trials, 64)
         }
-        lastAutoEvalEpisode = 0  // Reset counter so next check uses new interval
+        // Don't reset lastAutoEvalEpisode - let auto-eval continue on its normal schedule
         console.log(
           `[TFWorker] Auto-eval ${autoEvalEnabled ? 'enabled' : 'disabled'} (every ${autoEvalInterval} eps, ${autoEvalTrials} trials)`
         )
