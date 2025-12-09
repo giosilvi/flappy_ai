@@ -51,7 +51,6 @@ export default defineComponent({
   methods: {
     initCanvas() {
       const canvas = this.$refs.canvas as HTMLCanvasElement
-      const container = this.$refs.container as HTMLElement
       this.ctx = canvas.getContext('2d')
       
       this.handleResize()

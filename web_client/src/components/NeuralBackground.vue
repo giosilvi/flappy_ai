@@ -55,7 +55,6 @@ export default defineComponent({
   methods: {
     initCanvas() {
       const canvas = this.$refs.canvas as HTMLCanvasElement
-      const container = this.$refs.container as HTMLElement
       this.ctx = canvas.getContext('2d')
       
       this.handleResize()
@@ -250,7 +249,7 @@ export default defineComponent({
       
       // Draw connections
       this.ctx.lineWidth = 1
-      this.nodes.forEach((node, i) => {
+      this.nodes.forEach((node) => {
         node.connections.forEach(targetIdx => {
            const target = this.nodes[targetIdx]
            // Draw line only once per pair (e.g. if i < targetIdx)? 
