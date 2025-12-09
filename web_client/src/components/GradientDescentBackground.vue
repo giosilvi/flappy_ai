@@ -91,10 +91,10 @@ export default defineComponent({
     spawnParticles() {
       this.particles = []
       // Just one ball at a time as requested
-      this.respawnParticle(0, true)
+      this.respawnParticle(0)
     },
     
-    respawnParticle(index: number, randomPos: boolean) {
+    respawnParticle(index: number) {
       const p = this.particles[index] || {} as Particle
       
       // Spawn at random position
@@ -167,7 +167,7 @@ export default defineComponent({
         
         // Check bounds
         if (p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) {
-           this.respawnParticle(i, false)
+           this.respawnParticle(i)
            return
         }
         
@@ -182,7 +182,7 @@ export default defineComponent({
         // Respawn if stuck long enough or too old
         if (p.stuckFrames > 60 || p.life > 800) {
            // Flash effect before respawn?
-           this.respawnParticle(i, false)
+           this.respawnParticle(i)
         }
       })
     },
@@ -221,8 +221,8 @@ export default defineComponent({
             // Get values at corners of the cell
             const tl = grid[y][x]
             const tr = grid[y][x+1]
-            const br = grid[y+1][x+1]
-            const bl = grid[y+1][x]
+            // const br = grid[y+1][x+1] // Unused
+            // const bl = grid[y+1][x]   // Unused
             
             // Simple linear interpolation for horizontal and vertical edges
             // We check if the level is between the corner values
