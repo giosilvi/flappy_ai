@@ -93,6 +93,7 @@ export default defineComponent({
     'architecture-loaded',
     'backend-ready',
     'eval-instances-set',
+    'gap-size-update',
   ],
   data() {
     return {
@@ -125,6 +126,7 @@ export default defineComponent({
       lastInitBackend: null as BackendType | 'auto' | null,
       pendingNumInstances: null as number | null,
       preferredBackend: 'auto' as BackendType | 'auto',
+      lastGapSize: null as number | null,
     }
   },
   computed: {
@@ -330,12 +332,34 @@ export default defineComponent({
     },
 
     renderTiledStates(states: BaseGameState[], rewards?: number[], cumulativeRewards?: number[]) {
+      this.emitGapSize(states)
       if (!this.tiledRenderer || !this.canVisualize) return
       // Don't show rewards during eval mode - only during training
       if (this.mode === 'eval') {
         this.tiledRenderer.render(states)
       } else {
         this.tiledRenderer.render(states, rewards, cumulativeRewards)
+      }
+    },
+    emitGapSize(states: BaseGameState[]) {
+      if (this.mode !== 'eval') {
+        return
+      }
+      if (!states || states.length === 0) {
+        return
+      }
+      const firstState: any = states[0] || {}
+      const pipes = firstState.pipes as any[] | undefined
+      if (!pipes || pipes.length === 0) {
+        return
+      }
+      const rawGap = pipes[0]?.gapSize ?? pipes[0]?.gap_size
+      if (typeof rawGap !== 'number') {
+        return
+      }
+      if (this.lastGapSize !== rawGap) {
+        this.lastGapSize = rawGap
+        this.$emit('gap-size-update', rawGap)
       }
     },
 

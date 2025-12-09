@@ -68,6 +68,7 @@
           :evalStats="evalStats"
           :evalComplete="evalComplete"
           :hasModel="hasModel"
+          :currentGapSize="currentGapSize"
           @update:epsilon="updateEpsilon"
           @update:learningRate="updateLearningRate"
           @update:epsilonDecaySteps="updateEpsilonDecaySteps"
@@ -123,6 +124,7 @@
           @architecture-loaded="handleArchitectureLoaded"
           @backend-ready="handleBackendReady"
           @eval-instances-set="handleEvalInstancesSet"
+          @gap-size-update="handleGapSizeUpdate"
         />
         <div v-if="mode === 'idle'" class="game-overlay">
           <div class="overlay-content idle-content">
@@ -419,6 +421,7 @@ export default defineComponent({
       hiddenLayersConfig: [64, 64] as number[],
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,
+      currentGapSize: null as number | null,
     }
   },
   computed: {
@@ -836,6 +839,7 @@ export default defineComponent({
       if (newMode === 'eval') {
         this.manualEvalActive = true
         this.autoEvalActive = false
+        this.currentGapSize = null
         // Save current epsilon before entering eval (to restore when returning to training)
         this.savedEpsilonBeforeEval = this.epsilon
         this.mode = 'eval'
@@ -864,6 +868,7 @@ export default defineComponent({
         this.manualEvalActive = false
         this.mode = 'training'
         this.isPaused = false
+        this.currentGapSize = null
         this.showGameOver = false
         // Restore epsilon if coming from eval mode (was set to 0)
         if (this.epsilon === 0 && this.savedEpsilonBeforeEval > 0) {
@@ -880,6 +885,7 @@ export default defineComponent({
       } else if (newMode === 'manual') {
         this.manualEvalActive = false
         this.mode = 'manual'
+        this.currentGapSize = null
         this.showGameOver = false
         if (gameCanvas) {
           gameCanvas.startGame()
@@ -1013,6 +1019,9 @@ export default defineComponent({
     handleEvalInstancesSet(count: number) {
       // Sync evalTargetInstances to the actual count used by GameCanvas/worker
       this.evalTargetInstances = count
+    },
+    handleGapSizeUpdate(gap: number) {
+      this.currentGapSize = gap
     },
     async handleScoreSubmitted(result: { entry: { name: string; score: number }; isNewChampion: boolean }) {
       this.lastSubmittedBestScore = this.bestScore

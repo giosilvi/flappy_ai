@@ -2,7 +2,7 @@
   <div class="landing-page">
     <!-- Hero Section -->
     <header class="hero">
-      <div class="hero-bg"></div>
+      <NeuralBackground />
       <div class="hero-content">
         <h1 class="hero-title glow-text">
           <span class="brand">VibeGames</span>
@@ -10,12 +10,16 @@
         <p class="hero-subtitle">
           Train neural networks in your browser to beat classic games
         </p>
-        <p class="hero-description">
-          No servers required. Your AI runs 100% locally in your browser.
-          Watch it learn, tweak the parameters, and compete on the leaderboard.
-        </p>
       </div>
     </header>
+
+    <!-- Intro Text Section -->
+    <section class="intro-section">
+      <p class="hero-description">
+        No servers required. Your AI runs 100% locally in your browser.
+        Watch it learn, tweak the parameters, and compete on the leaderboard.
+      </p>
+    </section>
 
     <!-- Games Section -->
     <main class="games-section">
@@ -27,6 +31,7 @@
           :to="`/game/${game.id}`"
           class="game-card"
         >
+          <NeuralBirdBackground v-if="game.id === 'flappy'" />
           <div class="game-thumbnail">
             <img 
               v-if="game.thumbnail" 
@@ -129,9 +134,15 @@
 <script lang="ts">
 import { defineComponent } from 'vue'
 import { getAllGames, type GameInfo } from '@/games'
+import NeuralBackground from '@/components/NeuralBackground.vue'
+import NeuralBirdBackground from '@/components/NeuralBirdBackground.vue'
 
 export default defineComponent({
   name: 'LandingPage',
+  components: {
+    NeuralBackground,
+    NeuralBirdBackground
+  },
   data() {
     return {
       games: [] as GameInfo[],
@@ -178,18 +189,6 @@ export default defineComponent({
   border-bottom: 1px solid var(--color-border);
 }
 
-.hero-bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: 
-    radial-gradient(circle at 20% 30%, rgba(0, 217, 255, 0.08) 0%, transparent 40%),
-    radial-gradient(circle at 80% 70%, rgba(255, 107, 53, 0.06) 0%, transparent 40%);
-  z-index: 0;
-}
-
 .hero-content {
   position: relative;
   max-width: 800px;
@@ -213,11 +212,13 @@ export default defineComponent({
 }
 
 .hero-subtitle {
-  font-size: 1.5rem;
+  font-size: 1.2rem;
+  font-family: 'Press Start 2P', monospace;
   color: var(--color-text);
-  margin-bottom: 20px;
-  font-weight: 500;
+  margin-bottom: 24px;
+  line-height: 1.6;
   text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  letter-spacing: -0.5px;
 }
 
 .hero-description {
@@ -228,8 +229,18 @@ export default defineComponent({
   margin: 0 auto;
 }
 
+/* Intro Section */
+.intro-section {
+  padding: 40px 20px;
+  text-align: center;
+  background: var(--color-bg-mid);
+  border-bottom: 1px solid var(--color-border);
+}
+
 /* Section Titles */
 .section-title {
+  position: relative; /* Ensure z-index works */
+  z-index: 1;
   font-family: 'Press Start 2P', monospace;
   font-size: 1.5rem;
   text-align: center;
@@ -254,6 +265,7 @@ export default defineComponent({
 }
 
 .game-card {
+  position: relative; /* Context for absolute bg */
   background: rgba(22, 33, 62, 0.6);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
@@ -281,6 +293,8 @@ export default defineComponent({
 }
 
 .game-thumbnail {
+  position: relative; /* Ensure above bg */
+  z-index: 1;
   height: 180px;
   background: rgba(0, 0, 0, 0.3);
   display: flex;
@@ -313,15 +327,19 @@ export default defineComponent({
 }
 
 .game-info {
+  position: relative; /* Ensure above bg */
+  z-index: 1;
   padding: 24px;
   flex: 1;
 }
 
 .game-name {
-  font-size: 1.4rem;
-  font-weight: 700;
-  margin-bottom: 10px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 1rem;
+  line-height: 1.5;
+  margin-bottom: 12px;
   color: var(--color-text);
+  letter-spacing: -0.5px;
 }
 
 .game-description {
@@ -334,10 +352,10 @@ export default defineComponent({
 .game-meta {
   display: flex;
   gap: 16px;
-  font-size: 0.8rem;
-  font-family: monospace;
+  font-size: 0.7rem;
+  font-family: 'Press Start 2P', monospace;
   background: rgba(0, 0, 0, 0.2);
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: 6px;
   display: inline-flex;
 }
@@ -348,10 +366,12 @@ export default defineComponent({
 
 .meta-label {
   color: var(--color-primary);
-  font-weight: 600;
+  margin-right: 4px;
 }
 
 .play-button {
+  position: relative; /* Ensure above bg */
+  z-index: 1;
   padding: 16px 20px;
   background: linear-gradient(135deg, var(--color-primary) 0%, #0099cc 100%);
   color: var(--color-bg-dark);
@@ -360,7 +380,9 @@ export default defineComponent({
   text-transform: uppercase;
   letter-spacing: 0.05em;
   transition: opacity 0.2s;
-  font-size: 0.9rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 .play-button:hover {
@@ -423,10 +445,12 @@ export default defineComponent({
 }
 
 .feature-title {
-  font-size: 1.2rem;
-  font-weight: 700;
-  margin-bottom: 12px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 16px;
   color: var(--color-text);
+  letter-spacing: -0.5px;
 }
 
 .feature-description {
@@ -439,7 +463,8 @@ export default defineComponent({
   margin-top: 16px;
   font-weight: 700;
   color: var(--color-primary);
-  font-size: 0.9rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }

@@ -104,9 +104,24 @@
           <span class="eval-icon">🎯</span>
           <span>Evaluation Mode</span>
         </div>
-        <p class="eval-info-text">Running fully greedy (ε=0)</p>
-        <p class="eval-info-text">No exploration, no training</p>
-        <p class="eval-status" v-if="isPaused">⏸ Paused</p>
+        
+        <div class="eval-content-wrapper">
+          <div class="eval-text-group">
+            <p class="eval-info-text">Pipe gaps shrink as you progress</p>
+            <p class="eval-info-text">Running fully greedy (ε=0)</p>
+            <p class="eval-info-text">No exploration, no training</p>
+            <p class="eval-status" v-if="isPaused">⏸ Paused</p>
+          </div>
+
+          <div 
+            v-if="gapSizeLabel" 
+            class="gap-pill gap-vertical" 
+            :title="'Pipe gap size'"
+          >
+            <span class="gap-label">Pipe gap</span>
+            <span class="gap-value">{{ gapSizeLabel }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Training-only controls (hidden in eval mode) -->
@@ -363,6 +378,10 @@ export default defineComponent({
       type: Boolean,
       default: false,
     },
+    currentGapSize: {
+      type: Number as PropType<number | null>,
+      default: null,
+    },
   },
   emits: [
     'update:epsilon',
@@ -460,6 +479,12 @@ More instances = more diverse experience = faster learning`
     },
     frameLimitTooltip(): string {
       return `When enabled and visualization is on, cap the game loop to 30 FPS so the on-screen animation matches intended speed. Training is paced accordingly while visualizing.`
+    },
+    gapSizeLabel(): string | null {
+      if (this.currentGapSize === null || this.currentGapSize === undefined) {
+        return null
+      }
+      return `${Math.round(this.currentGapSize)} px`
     },
   },
   methods: {
@@ -900,7 +925,54 @@ More instances = more diverse experience = faster learning`
   font-size: 0.75rem;
   color: var(--color-text-muted);
   margin: 2px 0;
-  padding-left: 1.6rem;
+  line-height: 1.3;
+  padding-left: 0.5rem;
+}
+
+.eval-content-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.eval-text-group {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.gap-pill {
+  margin-left: auto;
+  background: rgba(255, 215, 0, 0.15);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  color: var(--color-accent);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.gap-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 80px;
+}
+
+.gap-label {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.gap-value {
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .eval-status {
@@ -908,7 +980,7 @@ More instances = more diverse experience = faster learning`
   color: var(--color-accent);
   font-weight: 600;
   margin-top: var(--spacing-sm);
-  padding-left: 1.6rem;
+  padding-left: 0.5rem;
 }
 
 /* Eval results section */

@@ -1,7 +1,7 @@
 <template>
   <div class="dql-page">
     <header class="hero">
-      <div class="hero-bg"></div>
+      <NeuralBackground />
       <router-link to="/" class="back-link">← Back to VibeGames</router-link>
       <div class="hero-content">
         <p class="eyebrow">Reinforcement Learning</p>
@@ -224,9 +224,13 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
+import NeuralBackground from '@/components/NeuralBackground.vue'
 
 export default defineComponent({
   name: 'DeepQLearning',
+  components: {
+    NeuralBackground
+  },
   data() {
     return {
       prevHtmlOverflow: '',
@@ -268,18 +272,6 @@ export default defineComponent({
   border-bottom: 1px solid var(--color-border);
 }
 
-.hero-bg {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: 
-    radial-gradient(circle at 20% 30%, rgba(0, 217, 255, 0.08) 0%, transparent 40%),
-    radial-gradient(circle at 80% 70%, rgba(255, 107, 53, 0.06) 0%, transparent 40%);
-  z-index: 0;
-}
-
 .back-link {
   position: absolute;
   top: 24px;
@@ -287,13 +279,15 @@ export default defineComponent({
   color: var(--color-text-secondary);
   text-decoration: none;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   z-index: 10;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: rgba(0, 0, 0, 0.3);
   border-radius: 8px;
   transition: all 0.2s;
   border: 1px solid transparent;
+  font-family: 'Press Start 2P', monospace;
+  line-height: 1.5;
 }
 
 .back-link:hover {
@@ -314,8 +308,9 @@ export default defineComponent({
   text-transform: uppercase;
   color: var(--color-primary);
   font-weight: 700;
-  margin-bottom: 16px;
-  font-size: 0.8rem;
+  margin-bottom: 24px;
+  font-size: 0.75rem;
+  font-family: 'Press Start 2P', monospace;
   text-shadow: 0 0 10px rgba(0, 217, 255, 0.4);
 }
 
@@ -375,18 +370,20 @@ h1.glow-text {
 
 .section-header h2 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.1rem;
   font-weight: 700;
   color: var(--color-text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.5px;
+  font-family: 'Press Start 2P', monospace;
+  line-height: 1.5;
 }
 
 .tag {
   background: rgba(0, 217, 255, 0.1);
   color: var(--color-primary);
-  padding: 4px 12px;
+  padding: 6px 12px;
   border-radius: 4px;
-  font-size: 0.75rem;
+  font-size: 0.65rem;
   font-family: 'Press Start 2P', monospace;
   text-transform: uppercase;
   border: 1px solid rgba(0, 217, 255, 0.2);
@@ -416,9 +413,11 @@ h1.glow-text {
 
 .card h3 {
   color: var(--color-primary);
-  font-size: 1.1rem;
-  margin-bottom: 12px;
+  font-size: 0.9rem;
+  margin-bottom: 16px;
   font-weight: 600;
+  font-family: 'Press Start 2P', monospace;
+  line-height: 1.5;
 }
 
 code {
@@ -467,24 +466,29 @@ code {
 }
 
 .step-marker {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   background: var(--color-secondary);
   color: white;
-  border-radius: 50%;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   margin-bottom: 12px;
-  box-shadow: 0 0 10px rgba(255, 107, 53, 0.4);
+  box-shadow: 4px 4px 0px rgba(0,0,0,0.3);
+  font-family: 'Press Start 2P', monospace;
+  border: 2px solid rgba(255,255,255,0.2);
 }
 
 .step-content h4 {
   color: var(--color-text);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-weight: 600;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }
 
 .step-content p {
