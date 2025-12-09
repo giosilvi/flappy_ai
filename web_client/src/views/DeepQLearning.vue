@@ -1,16 +1,19 @@
 <template>
   <div class="dql-page">
     <header class="hero">
-      <NeuralBackground />
+      <GradientDescentBackground />
       <router-link to="/" class="back-link">← Back to VibeGames</router-link>
       <div class="hero-content">
         <p class="eyebrow">Reinforcement Learning</p>
         <h1 class="glow-text">Deep Q-Learning</h1>
-        <p class="lede">
-          Theory and mechanics of Deep Q-Learning: value estimation, Bellman targets, replay buffers, target networks, and ε-greedy exploration — all runnable in-browser.
-        </p>
       </div>
     </header>
+
+    <section class="intro-section">
+      <p class="lede">
+        Theory and mechanics of Deep Q-Learning: value estimation, Bellman targets, replay buffers, target networks, and ε-greedy exploration — all runnable in-browser.
+      </p>
+    </section>
 
     <main class="content">
       <section class="panel">
@@ -224,12 +227,12 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import NeuralBackground from '@/components/NeuralBackground.vue'
+import GradientDescentBackground from '@/components/GradientDescentBackground.vue'
 
 export default defineComponent({
   name: 'DeepQLearning',
   components: {
-    NeuralBackground
+    GradientDescentBackground
   },
   data() {
     return {
@@ -331,6 +334,13 @@ h1.glow-text {
   line-height: 1.7;
   max-width: 720px;
   margin: 0 auto;
+}
+
+.intro-section {
+  padding: 40px 20px;
+  text-align: center;
+  background: var(--color-bg-mid);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .content {
