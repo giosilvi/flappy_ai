@@ -2,8 +2,8 @@
   <div class="landing-page">
     <!-- Hero Section -->
     <header class="hero">
-      <NeuralBackground />
-      <div class="hero-content">
+      <GradientDescentBackground ref="gradientBg" />
+      <div class="hero-content" @click="handleHeroClick">
         <h1 class="hero-title glow-text">
           <span class="brand">VibeGames</span>
         </h1>
@@ -134,13 +134,13 @@
 <script lang="ts">
 import { defineComponent } from 'vue'
 import { getAllGames, type GameInfo } from '@/games'
-import NeuralBackground from '@/components/NeuralBackground.vue'
+import GradientDescentBackground from '@/components/GradientDescentBackground.vue'
 import NeuralBirdBackground from '@/components/NeuralBirdBackground.vue'
 
 export default defineComponent({
   name: 'LandingPage',
   components: {
-    NeuralBackground,
+    GradientDescentBackground,
     NeuralBirdBackground
   },
   data() {
@@ -169,6 +169,14 @@ export default defineComponent({
     html.style.overflowY = this.prevHtmlOverflow
     body.style.overflowY = this.prevBodyOverflow
   },
+  methods: {
+    handleHeroClick() {
+      const gradientBg = this.$refs.gradientBg as any
+      if (gradientBg && gradientBg.handleClick) {
+        gradientBg.handleClick()
+      }
+    }
+  }
 })
 </script>
 
@@ -194,6 +202,7 @@ export default defineComponent({
   max-width: 800px;
   margin: 0 auto;
   z-index: 1;
+  cursor: pointer; /* Indicate it's clickable */
 }
 
 .hero-title {

@@ -1,19 +1,16 @@
 <template>
   <div class="dql-page">
     <header class="hero">
-      <GradientDescentBackground />
+      <GradientDescentBackground ref="gradientBg" />
       <router-link to="/" class="back-link">← Back to VibeGames</router-link>
-      <div class="hero-content">
+      <div class="hero-content" @click="handleHeroClick">
         <p class="eyebrow">Reinforcement Learning</p>
         <h1 class="glow-text">Deep Q-Learning</h1>
+        <p class="lede">
+          Theory and mechanics of Deep Q-Learning: value estimation, Bellman targets, replay buffers, target networks, and ε-greedy exploration — all runnable in-browser.
+        </p>
       </div>
     </header>
-
-    <section class="intro-section">
-      <p class="lede">
-        Theory and mechanics of Deep Q-Learning: value estimation, Bellman targets, replay buffers, target networks, and ε-greedy exploration — all runnable in-browser.
-      </p>
-    </section>
 
     <main class="content">
       <section class="panel">
@@ -256,6 +253,14 @@ export default defineComponent({
     html.style.overflowY = this.prevHtmlOverflow
     body.style.overflowY = this.prevBodyOverflow
   },
+  methods: {
+    handleHeroClick() {
+      const gradientBg = this.$refs.gradientBg as any
+      if (gradientBg && gradientBg.handleClick) {
+        gradientBg.handleClick()
+      }
+    }
+  }
 })
 </script>
 
@@ -269,7 +274,7 @@ export default defineComponent({
 
 .hero {
   position: relative;
-  padding: 80px 20px 60px;
+  padding: 100px 20px 80px; /* Increased padding */
   text-align: center;
   overflow: hidden;
   border-bottom: 1px solid var(--color-border);
@@ -304,6 +309,7 @@ export default defineComponent({
   max-width: 800px;
   margin: 0 auto;
   z-index: 1;
+  cursor: pointer; /* Indicate it's clickable */
 }
 
 .eyebrow {
@@ -334,14 +340,11 @@ h1.glow-text {
   line-height: 1.7;
   max-width: 720px;
   margin: 0 auto;
+  position: relative; /* Ensure z-index works if needed, though hero-content handles it */
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8); /* Added shadow for readability over animation */
 }
 
-.intro-section {
-  padding: 40px 20px;
-  text-align: center;
-  background: var(--color-bg-mid);
-  border-bottom: 1px solid var(--color-border);
-}
+/* Removed intro-section styles as it's merged */
 
 .content {
   max-width: 1000px;
