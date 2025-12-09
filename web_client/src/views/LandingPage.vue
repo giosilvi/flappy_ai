@@ -2,10 +2,10 @@
   <div class="landing-page">
     <!-- Hero Section -->
     <header class="hero">
+      <div class="hero-bg"></div>
       <div class="hero-content">
-        <h1 class="hero-title">
+        <h1 class="hero-title glow-text">
           <span class="brand">VibeGames</span>
-          <span class="tagline">.it</span>
         </h1>
         <p class="hero-subtitle">
           Train neural networks in your browser to beat classic games
@@ -78,14 +78,17 @@
     <section class="features-section">
       <h2 class="section-title">How It Works</h2>
       <div class="features-grid">
-        <div class="feature-card">
+        <router-link
+          class="feature-card link-card"
+          to="/deep-q-learning"
+        >
           <div class="feature-icon">🧠</div>
           <h3 class="feature-title">Deep Q-Learning</h3>
           <p class="feature-description">
-            Train a neural network using DQN (Deep Q-Network) algorithm.
-            Watch it learn optimal strategies through trial and error.
+            Train a neural network using the DQN algorithm. Dive into the details and see how it learns optimal strategies through trial and error.
           </p>
-        </div>
+          <div class="link-cta">Learn how it works →</div>
+        </router-link>
         <div class="feature-card">
           <div class="feature-icon">💻</div>
           <h3 class="feature-title">100% Local</h3>
@@ -161,170 +164,203 @@ export default defineComponent({
 <style scoped>
 .landing-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, var(--color-bg) 0%, var(--color-bg-dark) 100%);
+  background: var(--color-bg-dark);
   color: var(--color-text);
+  font-family: var(--font-body);
 }
 
 /* Hero Section */
 .hero {
-  padding: 80px 20px 60px;
+  position: relative;
+  padding: 100px 20px 80px;
   text-align: center;
-  background: linear-gradient(180deg, rgba(79, 195, 247, 0.1) 0%, transparent 100%);
+  overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hero-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 20% 30%, rgba(0, 217, 255, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(255, 107, 53, 0.06) 0%, transparent 40%);
+  z-index: 0;
 }
 
 .hero-content {
+  position: relative;
   max-width: 800px;
   margin: 0 auto;
+  z-index: 1;
 }
 
 .hero-title {
+  font-family: 'Press Start 2P', monospace;
   font-size: 3.5rem;
-  font-weight: 700;
-  margin-bottom: 16px;
-  letter-spacing: -1px;
+  line-height: 1.4;
+  margin-bottom: 24px;
+  letter-spacing: -2px;
 }
 
 .brand {
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.tagline {
-  color: var(--color-text-secondary);
-  font-weight: 400;
+  color: #fff;
+  text-shadow: 
+    3px 3px 0px var(--color-primary),
+    0 0 30px rgba(0, 217, 255, 0.6);
 }
 
 .hero-subtitle {
   font-size: 1.5rem;
   color: var(--color-text);
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   font-weight: 500;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.5);
 }
 
 .hero-description {
   font-size: 1.1rem;
   color: var(--color-text-secondary);
-  line-height: 1.6;
-  max-width: 600px;
+  line-height: 1.7;
+  max-width: 640px;
   margin: 0 auto;
 }
 
 /* Section Titles */
 .section-title {
-  font-size: 1.8rem;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 1.5rem;
   text-align: center;
-  margin-bottom: 40px;
-  color: var(--color-text);
+  margin-bottom: 48px;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: -1px;
+  text-shadow: 0 0 15px rgba(0, 217, 255, 0.3);
 }
 
 /* Games Section */
 .games-section {
-  padding: 60px 20px;
+  padding: 80px 20px;
   max-width: 1200px;
   margin: 0 auto;
 }
 
 .games-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 32px;
 }
 
 .game-card {
-  background: var(--color-bg-light);
+  background: rgba(22, 33, 62, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
   border-radius: 16px;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .game-card:hover:not(.coming-soon) {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  transform: translateY(-6px);
+  box-shadow: 0 12px 40px rgba(0, 217, 255, 0.15);
   border-color: var(--color-primary);
 }
 
 .game-card.coming-soon {
   opacity: 0.6;
   cursor: default;
+  background: rgba(0, 0, 0, 0.2);
 }
 
 .game-thumbnail {
-  height: 160px;
-  background: var(--color-bg);
+  height: 180px;
+  background: rgba(0, 0, 0, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .game-image {
-  width: 80px;
-  height: 80px;
+  width: 96px;
+  height: 96px;
   object-fit: contain;
   image-rendering: pixelated;
+  filter: drop-shadow(0 0 10px rgba(0,0,0,0.5));
 }
 
 .game-placeholder {
   width: 80px;
   height: 80px;
   background: var(--color-primary);
-  border-radius: 50%;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: 'Press Start 2P', monospace;
   font-size: 2rem;
-  font-weight: 700;
-  color: white;
+  color: var(--color-bg-dark);
+  box-shadow: 0 0 20px var(--color-primary-glow);
 }
 
 .game-info {
-  padding: 20px;
+  padding: 24px;
   flex: 1;
 }
 
 .game-name {
-  font-size: 1.3rem;
-  font-weight: 600;
-  margin-bottom: 8px;
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 10px;
   color: var(--color-text);
 }
 
 .game-description {
   font-size: 0.95rem;
   color: var(--color-text-secondary);
-  line-height: 1.5;
-  margin-bottom: 12px;
+  line-height: 1.6;
+  margin-bottom: 16px;
 }
 
 .game-meta {
   display: flex;
   gap: 16px;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  font-family: monospace;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 12px;
+  border-radius: 6px;
+  display: inline-flex;
 }
 
 .meta-item {
-  color: var(--color-text-secondary);
+  color: var(--color-text-muted);
 }
 
 .meta-label {
   color: var(--color-primary);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .play-button {
   padding: 16px 20px;
-  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
-  color: white;
-  font-weight: 600;
+  background: linear-gradient(135deg, var(--color-primary) 0%, #0099cc 100%);
+  color: var(--color-bg-dark);
+  font-weight: 700;
   text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   transition: opacity 0.2s;
+  font-size: 0.9rem;
 }
 
 .play-button:hover {
@@ -332,48 +368,80 @@ export default defineComponent({
 }
 
 .play-button.disabled {
-  background: var(--color-bg);
-  color: var(--color-text-secondary);
+  background: var(--color-bg-mid);
+  color: var(--color-text-muted);
 }
 
 /* Features Section */
 .features-section {
-  padding: 60px 20px;
-  background: var(--color-bg-dark);
+  padding: 80px 20px;
+  background: linear-gradient(180deg, var(--color-bg-dark) 0%, var(--color-bg-mid) 100%);
+  border-top: 1px solid var(--color-border);
 }
 
 .features-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 24px;
   max-width: 1200px;
   margin: 0 auto;
 }
 
 .feature-card {
-  background: var(--color-bg-light);
-  border-radius: 12px;
-  padding: 24px;
-  text-align: center;
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 32px 24px;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.feature-card:hover {
+  border-color: var(--color-secondary);
+  transform: translateY(-4px);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.feature-card.link-card {
+  border-color: var(--color-primary);
+  background: rgba(0, 217, 255, 0.05);
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+
+.feature-card.link-card:hover {
+  box-shadow: 0 0 25px rgba(0, 217, 255, 0.15);
+  transform: translateY(-6px);
 }
 
 .feature-icon {
   font-size: 2.5rem;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  display: inline-block;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.2));
 }
 
 .feature-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin-bottom: 8px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin-bottom: 12px;
   color: var(--color-text);
 }
 
 .feature-description {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   color: var(--color-text-secondary);
-  line-height: 1.5;
+  line-height: 1.6;
+}
+
+.link-cta {
+  margin-top: 16px;
+  font-weight: 700;
+  color: var(--color-primary);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 /* Footer */
@@ -381,6 +449,7 @@ export default defineComponent({
   padding: 40px 20px;
   text-align: center;
   border-top: 1px solid var(--color-border);
+  background: var(--color-bg-dark);
 }
 
 .footer-text {
@@ -389,19 +458,11 @@ export default defineComponent({
   margin-bottom: 8px;
 }
 
-.footer-text a {
-  color: var(--color-primary);
-  text-decoration: none;
-}
-
-.footer-text a:hover {
-  text-decoration: underline;
-}
-
 .footer-vibe {
   color: var(--color-text-muted);
   font-size: 0.8rem;
   font-style: italic;
+  font-family: monospace;
 }
 
 /* Responsive */

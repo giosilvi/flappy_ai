@@ -16,6 +16,14 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    path: '/deep-q-learning',
+    name: 'deep-q-learning',
+    component: () => import('@/views/DeepQLearning.vue'),
+    meta: {
+      title: 'Deep Q-Learning - VibeGames',
+    },
+  },
+  {
     path: '/game/:gameId',
     name: 'game',
     component: () => import('@/views/GameView.vue'),
