@@ -280,8 +280,8 @@ export default defineComponent({
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 500px;
-  max-height: 90vh;
+  max-width: 800px;
+  max-height: 92vh;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -297,7 +297,7 @@ export default defineComponent({
 }
 
 .leaderboard-title {
-  font-size: 1.25rem;
+  font-size: 1.4rem;
   font-family: var(--font-display);
   color: var(--color-text);
   margin: 0;
@@ -370,7 +370,7 @@ export default defineComponent({
 .leaderboard-table-wrapper {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-md);
+  padding: var(--spacing-lg);
 }
 
 .leaderboard-table {
@@ -405,11 +405,11 @@ export default defineComponent({
   background: rgba(0, 217, 255, 0.1);
 }
 
-.rank-col { width: 35px; }
+.rank-col { width: 40px; }
 .name-col { }
-.pipes-col { width: 50px; text-align: right; }
-.score-col { width: 55px; text-align: right; }
-.params-col { width: 60px; text-align: right; }
+.pipes-col { width: 70px; text-align: right; }
+.score-col { width: 80px; text-align: right; }
+.params-col { width: 80px; text-align: right; }
 
 .rank-badge {
   display: inline-flex;
