@@ -92,6 +92,7 @@ export interface ObservationConfig {
   dy2: boolean
   gapVel1: boolean
   gapVel2: boolean
+  gapSize1: boolean // Gap size of next pipe (helps with progressive difficulty)
 }
 
 export const DefaultObservationConfig: ObservationConfig = {
@@ -103,6 +104,7 @@ export const DefaultObservationConfig: ObservationConfig = {
   dy2: true,
   gapVel1: false,
   gapVel2: false,
+  gapSize1: false,
 }
 
 /**

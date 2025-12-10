@@ -83,7 +83,7 @@
           <g class="input-nodes">
             <g v-for="(node, i) in inputNodes" :key="'in-'+i" :transform="`translate(${node.x}, ${node.y})`">
               <circle r="20" :fill="getNodeColor(node.activation)" :stroke="getNodeStroke(node.activation)" stroke-width="2" :filter="Math.abs(node.activation) > 0.5 ? 'url(#glow)' : ''"/>
-              <text x="-30" y="4" class="node-label" text-anchor="end">{{ inputLabels[i] }}</text>
+              <text x="-30" y="4" class="node-label" text-anchor="end">{{ effectiveInputLabels[i] }}</text>
               <text y="4" class="node-value" text-anchor="middle">{{ formatValue(node.activation) }}</text>
             </g>
           </g>
@@ -287,7 +287,7 @@
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue'
 
-const INPUT_LABELS = ['y', 'vel', 'dx₁', 'dy₁', 'dx₂', 'dy₂']
+const DEFAULT_INPUT_LABELS = ['y', 'vel', 'dx₁', 'dy₁', 'dx₂', 'dy₂', 'gap']
 const OUTPUT_LABELS = ['IDLE', 'FLAP']
 
 export default defineComponent({
@@ -296,6 +296,10 @@ export default defineComponent({
     input: {
       type: Array as PropType<number[]>,
       default: () => [0, 0, 0, 0, 0, 0],
+    },
+    inputLabels: {
+      type: Array as PropType<string[]>,
+      default: undefined,
     },
     qValues: {
       type: Array as PropType<number[]>,
@@ -329,7 +333,7 @@ export default defineComponent({
   emits: ['close', 'toggle-pause', 'update-epsilon'],
   data() {
     return {
-      inputLabels: INPUT_LABELS,
+      inputLabelFallback: DEFAULT_INPUT_LABELS,
       outputLabels: OUTPUT_LABELS,
       svgWidth: 1450,
       svgHeight: 600,
@@ -337,11 +341,25 @@ export default defineComponent({
     }
   },
   computed: {
+    inputCount(): number {
+      const fromInput = this.input?.length
+      const fromLabels = this.inputLabels?.length
+      const count = fromInput || fromLabels || this.inputLabelFallback.length
+      return Math.max(1, count)
+    },
+    effectiveInputLabels(): string[] {
+      const source = this.inputLabels && this.inputLabels.length > 0 ? this.inputLabels : this.inputLabelFallback
+      const labels: string[] = []
+      for (let i = 0; i < this.inputCount; i++) {
+        labels.push(source[i] ?? `f${i + 1}`)
+      }
+      return labels
+    },
     architectureString(): string {
-      return [6, ...this.hiddenLayers, 2].join(' → ')
+      return [this.inputCount, ...this.hiddenLayers, 2].join(' → ')
     },
     paramsString(): string {
-      const layers = [6, ...this.hiddenLayers, 2]
+      const layers = [this.inputCount, ...this.hiddenLayers, 2]
       let total = 0
       for (let i = 0; i < layers.length - 1; i++) {
         total += layers[i] * layers[i + 1] + layers[i + 1]
@@ -362,14 +380,15 @@ export default defineComponent({
       return names
     },
     layerSizes(): string[] {
-      const sizes = ['6 nodes']
+      const sizes = [`${this.inputCount} nodes`]
       this.hiddenLayers.forEach(size => sizes.push(`${size} nodes`))
       sizes.push('2 nodes')
       return sizes
     },
     inputNodes(): Array<{ x: number; y: number; activation: number }> {
-      const spacing = (this.svgHeight - 150) / 5
-      return Array.from({ length: 6 }, (_, i) => ({
+      const count = this.inputCount
+      const spacing = count > 1 ? (this.svgHeight - 150) / (count - 1) : 0
+      return Array.from({ length: count }, (_, i) => ({
         x: this.layerPositions[0],
         y: 75 + i * spacing,
         activation: this.input[i] || 0,

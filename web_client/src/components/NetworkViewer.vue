@@ -83,7 +83,7 @@
 
       <!-- Input nodes with live values -->
       <g class="input-layer">
-        <g v-for="(label, i) in inputLabels" :key="'in-'+i" :transform="`translate(${layerPositions[0]}, ${getNodeY(6, i)})`">
+        <g v-for="(label, i) in dynamicInputLabels" :key="'in-'+i" :transform="`translate(${layerPositions[0]}, ${getNodeY(inputCount, i)})`">
           <circle r="8" :fill="getInputColor(i)" stroke="#3d3d5a" stroke-width="1"/>
           <text x="-12" y="4" class="input-label" text-anchor="end">{{ label }}</text>
         </g>
@@ -190,7 +190,7 @@
 <script lang="ts">
 import { defineComponent, type PropType } from 'vue'
 
-const INPUT_LABELS = ['y', 'vel', 'dx₁', 'dy₁', 'dx₂', 'dy₂']
+const BASE_INPUT_LABELS = ['y', 'vel', 'dx₁', 'dy₁', 'dx₂', 'dy₂', 'gap']
 
 export default defineComponent({
   name: 'NetworkViewer',
@@ -224,6 +224,10 @@ export default defineComponent({
       type: Array as PropType<number[]>,
       default: () => [64, 64],
     },
+    inputLabels: {
+      type: Array as PropType<string[] | undefined>,
+      default: undefined,
+    },
     weightHealth: {
       type: Object as PropType<{ delta: number; avgSign: number } | null>,
       default: null,
@@ -235,7 +239,7 @@ export default defineComponent({
   },
   data() {
     return {
-      inputLabels: INPUT_LABELS,
+      inputLabels: BASE_INPUT_LABELS,
       displayNodes: 5, // Max nodes to show visually per layer
       // Weight health tracking (pre-computed metrics received from props)
       deltaHistory: [] as number[], // Last N delta values
@@ -262,17 +266,36 @@ export default defineComponent({
     },
   },
   computed: {
+    inputCount(): number {
+      const countFromActivations = this.activations[0]?.length
+      const countFromProps = this.inputLabels?.length
+      const count = countFromActivations ?? countFromProps ?? BASE_INPUT_LABELS.length
+      return Math.max(1, count)
+    },
+    dynamicInputLabels(): string[] {
+      const source = this.inputLabels && this.inputLabels.length > 0
+        ? this.inputLabels
+        : BASE_INPUT_LABELS
+      const labels: string[] = []
+      for (let i = 0; i < this.inputCount; i++) {
+        labels.push(source[i] ?? `f${i + 1}`)
+      }
+      return labels
+    },
     networkInfo(): string {
       // Show dynamic network architecture: Input → Hidden layers → Output
-      const layers = [6, ...this.hiddenLayers, 2]
+      const layers = [this.inputCount, ...this.hiddenLayers, 2]
       return layers.join(' → ')
     },
     inputValues(): number[] {
-      return this.activations[0] || [0, 0, 0, 0, 0, 0]
+      if (this.activations[0] && this.activations[0].length > 0) {
+        return this.activations[0]
+      }
+      return Array(this.inputCount).fill(0)
     },
     // All layer sizes: [input, hidden1, hidden2, ..., output]
     allLayers(): number[] {
-      return [6, ...this.hiddenLayers, 2]
+      return [this.inputCount, ...this.hiddenLayers, 2]
     },
     // Calculate SVG width based on number of layers (extra space for decision section)
     svgWidth(): number {

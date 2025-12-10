@@ -76,6 +76,17 @@ describe('UnifiedDQN integration (flappy, no mocks)', () => {
       visualize: false,
       frameLimit30: false,
       gameId: 'flappy',
+      observationConfig: {
+        birdY: true,
+        birdVel: true,
+        dx1: true,
+        dy1: true,
+        dx2: true,
+        dy2: true,
+        gapVel1: false,
+        gapVel2: false,
+        gapSize1: true, // enable optional gap size input
+      },
     })
 
     await dqn.init({
@@ -113,3 +124,4 @@ describe('UnifiedDQN integration (flappy, no mocks)', () => {
     70000
   )
 })
+

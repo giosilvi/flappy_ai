@@ -96,6 +96,7 @@
           :epsilon="networkEpsilon"
           :isExploring="isExploring"
           :hiddenLayers="hiddenLayersConfig"
+          :inputLabels="effectiveInputLabels.length ? effectiveInputLabels : inputLabels"
           :weightHealth="weightHealth"
           :fastMode="numInstances > 1"
           @open-detail="showNetworkDetail = true"
@@ -109,12 +110,14 @@
           :numInstances="numInstances"
           :isPaused="isPaused"
           :hiddenLayersConfig="hiddenLayersConfig"
+          :observationConfig="observationConfig"
           :frameLimit30="frameLimit30"
           :epsilon="epsilon"
           :learningRate="learningRate"
           :autoDecay="autoDecay"
           :epsilonDecaySteps="epsilonDecaySteps"
           :gameId="gameId"
+          @observation-config-loaded="handleObservationConfigLoaded"
           @score-update="handleScoreUpdate"
           @episode-end="handleEpisodeEnd"
           @metrics-update="handleMetricsUpdate"
@@ -141,6 +144,7 @@
         <div v-if="mode === 'configuring'" class="game-overlay config-overlay">
           <NetworkConfig
             :initialConfig="hiddenLayersConfig"
+            :initialObservationConfig="observationConfig"
             @start="startTrainingWithConfig"
           />
         </div>
@@ -309,6 +313,7 @@
     <NetworkDetailPanel
       v-if="showNetworkDetail"
       :input="networkActivations[0] || []"
+      :inputLabels="effectiveInputLabels.length ? effectiveInputLabels : inputLabels"
       :qValues="qValues"
       :selectedAction="selectedAction"
       :greedyAction="greedyAction"
@@ -339,6 +344,8 @@ import { getAvailableBackends } from '@/rl/backendUtils'
 import type { BackendType } from '@/rl/backendUtils'
 import type { TrainingMetrics, AutoEvalResult } from '@/rl/types'
 import { getGame, DEFAULT_GAME_ID } from '@/games'
+import { ObservationLabels } from '@/games/flappy/GameState'
+import { DefaultObservationConfig as FlappyDefaultObservationConfig } from '@/games/flappy/config'
 
 export type GameMode = 'idle' | 'configuring' | 'training' | 'eval' | 'manual'
 
@@ -412,6 +419,7 @@ export default defineComponent({
       greedyAction: 0,
       networkEpsilon: 0,  // Epsilon for network viz (separate from control epsilon)
       isExploring: false,
+      effectiveInputLabels: [] as string[],
       weightHealth: null as { delta: number; avgSign: number } | null,
       isPaused: false,
       showGameOver: false,
@@ -419,6 +427,7 @@ export default defineComponent({
       lastGameScore: 0,
       showLeaderboard: false,
       hiddenLayersConfig: [64, 64] as number[],
+      observationConfig: { ...FlappyDefaultObservationConfig } as Record<string, boolean>,
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,
       currentGapSize: null as number | null,
@@ -444,10 +453,32 @@ export default defineComponent({
       return getGame(this.gameId)?.info
     },
     inputDim(): number {
-      return this.gameInfo?.inputDim ?? 6
+    const dim = Object.values(this.observationConfig || {}).filter(Boolean).length
+    return dim > 0 ? dim : (this.gameInfo?.inputDim ?? 6)
     },
     outputDim(): number {
       return this.gameInfo?.outputDim ?? 2
+    },
+    inputLabels(): string[] {
+      const friendly: Record<(typeof ObservationLabels)[number], string> = {
+        birdY: 'y',
+        birdVel: 'vel',
+        dx1: 'dx₁',
+        dy1: 'dy₁',
+        dx2: 'dx₂',
+        dy2: 'dy₂',
+        gapVel1: 'gapV₁',
+        gapVel2: 'gapV₂',
+        gapSize1: 'gap',
+      }
+      const labels: string[] = []
+      for (const key of ObservationLabels) {
+        if ((this.observationConfig as Record<string, boolean>)[key]) {
+          labels.push(friendly[key])
+        }
+      }
+      if (labels.length === 0) labels.push('f1')
+      return labels
     },
     networkParams(): number {
       const layers = [this.inputDim, ...this.hiddenLayersConfig, this.outputDim]
@@ -527,8 +558,11 @@ export default defineComponent({
       this.showGameOver = false
       this.isPaused = false
     },
-    async startTrainingWithConfig(hiddenLayers: number[]) {
+    async startTrainingWithConfig(hiddenLayers: number[], observationConfig?: Record<string, boolean>) {
       this.hiddenLayersConfig = hiddenLayers
+      if (observationConfig) {
+        this.observationConfig = { ...observationConfig }
+      }
       this.mode = 'training'
       this.hasModel = true
       const gameCanvas = this.$refs.gameCanvas as InstanceType<typeof GameCanvas>
@@ -536,7 +570,7 @@ export default defineComponent({
         // Explicitly set epsilon before starting (avoids race condition with props)
         gameCanvas.setEpsilon(this.epsilon)
         try {
-          await gameCanvas.startTraining(hiddenLayers)
+          await gameCanvas.startTraining(hiddenLayers, this.observationConfig)
         } catch (error) {
           console.error('[GameView] Failed to start training with config:', error)
         }
@@ -683,6 +717,11 @@ export default defineComponent({
         ...hiddenLayers.map(() => []),
         viz.qValues,
       ]
+      // Compute effective input labels based on actual input length (e.g., loaded checkpoints)
+      const inputDim = viz.input?.length || 0
+      const baseLabels = this.inputLabels
+      this.effectiveInputLabels = inputDim > 0 ? baseLabels.slice(0, inputDim) : baseLabels
+
       if (viz.qValues && viz.qValues.length === 2) {
         this.qValues = [viz.qValues[0], viz.qValues[1]] as [number, number]
         this.selectedAction = viz.selectedAction
@@ -691,6 +730,16 @@ export default defineComponent({
         this.isExploring = viz.isExploring
       }
       // No localStorage needed - data flows via Vue props to NetworkDetailPanel
+    },
+    handleObservationConfigLoaded(payload: { config?: Record<string, boolean>; labels?: string[] }) {
+      if (payload.config) {
+        this.observationConfig = { ...this.observationConfig, ...payload.config }
+      }
+      if (payload.labels && payload.labels.length > 0) {
+        this.effectiveInputLabels = [...payload.labels]
+      } else {
+        this.effectiveInputLabels = this.inputLabels
+      }
     },
     handleWeightHealthUpdate(health: any) {
       // Normalize worker payload to the NetworkViewer shape
@@ -922,6 +971,7 @@ export default defineComponent({
       this.lastSubmittedBestScore = 0
       this.hasModel = false
       this.mode = 'configuring'
+      this.observationConfig = { ...FlappyDefaultObservationConfig }
     },
     async restartGame() {
       this.showGameOver = false

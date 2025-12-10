@@ -102,8 +102,28 @@ export function stateToObservation(
     obs.push((pipe2.gapVelY || 0) / GameConfig.VIEWPORT_HEIGHT)
   }
 
+  // Gap size (normalized by initial gap, helps with progressive difficulty)
+  if (config.gapSize1) {
+    obs.push(pipe1.gapSize / GameConfig.PIPE.INITIAL_GAP)
+  }
+
   return obs
 }
+
+/**
+ * Ordered labels matching the observation vector construction
+ */
+export const ObservationLabels = [
+  'birdY',
+  'birdVel',
+  'dx1',
+  'dy1',
+  'dx2',
+  'dy2',
+  'gapVel1',
+  'gapVel2',
+  'gapSize1',
+] as const
 
 /**
  * Get the dimension of observation vector based on config
@@ -118,6 +138,7 @@ export function getObservationDim(config: ObservationConfig): number {
   if (config.dy2) dim++
   if (config.gapVel1) dim++
   if (config.gapVel2) dim++
+  if (config.gapSize1) dim++
   return dim
 }
 

@@ -21,6 +21,7 @@ export {
   createInitialState,
   stateToObservation,
   getObservationDim,
+  ObservationLabels,
   clamp,
 } from './GameState'
 export {

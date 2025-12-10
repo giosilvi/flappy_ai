@@ -4,9 +4,9 @@
  */
 
 import { MAX_VISUALIZED_INSTANCES } from '../games/flappy/VectorizedEnv'
-import { DefaultRewardConfig as FlappyDefaultRewardConfig } from '../games/flappy/config'
-import type { BaseGameState, BaseRewardConfig, IVectorizedEnv } from './IVectorizedEnv'
-import { getGame, DEFAULT_GAME_ID } from '../games'
+import { DefaultRewardConfig as FlappyDefaultRewardConfig, DefaultObservationConfig as FlappyDefaultObservationConfig } from '../games/flappy/config'
+import type { BaseGameState, BaseRewardConfig, BaseObservationConfig, IVectorizedEnv } from './IVectorizedEnv'
+import { getGame, DEFAULT_GAME_ID, computeInputDim } from '../games'
 import { TFDQNAgent, type TFDQNConfig, DefaultTFDQNConfig } from './TFDQNAgent'
 import { ReplayBuffer } from './ReplayBuffer'
 import { 
@@ -20,7 +20,7 @@ import { initBestBackend, type BackendType } from './backendUtils'
 // ===== Message Types =====
 
 type WorkerMessage =
-  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string }
+  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string; observationConfig?: BaseObservationConfig }
   | { type: 'setNumEnvs'; count: number }
   | { type: 'startTraining'; visualize: boolean }
   | { type: 'stopTraining' }
@@ -58,6 +58,7 @@ let buffer: ReplayBuffer | null = null
 let metricsCollector: MetricsCollector | null = null
 let config: TFDQNConfig = { ...DefaultTFDQNConfig }
 let rewardConfig: Record<string, number> = { ...FlappyDefaultRewardConfig }
+let observationConfig: BaseObservationConfig = { ...FlappyDefaultObservationConfig }
 let currentBackend: BackendType = 'cpu'
 let currentGameId: string = DEFAULT_GAME_ID
 
@@ -147,7 +148,8 @@ async function initialize(
   agentConfig: Partial<TFDQNConfig>,
   initialNumEnvs: number,
   backend: BackendType | 'auto',
-  gameId: string = DEFAULT_GAME_ID
+  gameId: string = DEFAULT_GAME_ID,
+  obsConfig?: BaseObservationConfig
 ): Promise<void> {
   try {
     // Initialize TensorFlow.js backend
@@ -165,8 +167,15 @@ async function initialize(
       throw new Error(`Game module not found for id: ${resolvedGameId}`)
     }
 
-    // Get game-specific dimensions from registry
-    const { inputDim, outputDim } = gameModule.info
+    // Merge observation config with defaults
+    const defaultObsConfig = (gameModule.info.defaultObservationConfig || FlappyDefaultObservationConfig) as BaseObservationConfig
+    observationConfig = { ...defaultObsConfig, ...obsConfig }
+
+    // Compute input dimension from observation config
+    const inputDim = computeInputDim(resolvedGameId, observationConfig)
+    const { outputDim } = gameModule.info
+
+    console.log(`[TFWorker] Using observation config:`, observationConfig, `inputDim: ${inputDim}`)
 
     // Store config with game-specific dimensions and bases for scaling
     config = {
@@ -189,8 +198,8 @@ async function initialize(
     const defaultRewards = gameModule.defaultRewardConfig || FlappyDefaultRewardConfig
     rewardConfig = { ...defaultRewards }
 
-    // Create vectorized environment via registry
-    env = gameModule.createEnv(numEnvs, rewardConfig) as IVectorizedEnv<BaseGameState, BaseRewardConfig>
+    // Create vectorized environment via registry with observation config
+    env = gameModule.createEnv(numEnvs, rewardConfig, observationConfig) as IVectorizedEnv<BaseGameState, BaseRewardConfig>
 
     // Create replay buffer
     buffer = new ReplayBuffer(bufferCapacity)
@@ -648,7 +657,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (msg.type) {
       case 'init':
-        await initialize(msg.config, msg.numEnvs, msg.backend, msg.gameId || DEFAULT_GAME_ID)
+        await initialize(msg.config, msg.numEnvs, msg.backend, msg.gameId || DEFAULT_GAME_ID, msg.observationConfig)
         break
 
       case 'setNumEnvs':

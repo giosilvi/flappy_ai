@@ -11,10 +11,13 @@ import type { TrainingMetrics, AutoEvalResult, WeightHealthMetrics } from './typ
 import { DefaultTrainingMetrics } from './types'
 import type { BackendType } from './backendUtils'
 import type { BaseGameState } from './IVectorizedEnv'
+import { getObservationLabels } from '@/games'
+
+import type { BaseObservationConfig } from './IVectorizedEnv'
 
 // Import worker message types
 type WorkerMessage =
-  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string }
+  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string; observationConfig?: BaseObservationConfig }
   | { type: 'setNumEnvs'; count: number }
   | { type: 'startTraining'; visualize: boolean }
   | { type: 'stopTraining' }
@@ -65,6 +68,7 @@ export interface UnifiedDQNConfig {
   visualize: boolean
   frameLimit30: boolean
   gameId: string  // Game identifier (e.g., 'flappy')
+  observationConfig?: BaseObservationConfig  // Optional observation feature flags
 }
 
 const DEFAULT_CONFIG: UnifiedDQNConfig = {
@@ -74,6 +78,7 @@ const DEFAULT_CONFIG: UnifiedDQNConfig = {
   visualize: true,
   frameLimit30: false,
   gameId: 'flappy',
+  observationConfig: undefined,
 }
 
 /**
@@ -104,6 +109,9 @@ export class UnifiedDQN {
     const safeAgentConfig: Partial<TFDQNConfig> = JSON.parse(
       JSON.stringify(this.config.agentConfig || {})
     )
+    const safeObservationConfig = this.config.observationConfig
+      ? JSON.parse(JSON.stringify(this.config.observationConfig))
+      : undefined
 
     // Create worker
     this.worker = new Worker(
@@ -142,6 +150,7 @@ export class UnifiedDQN {
         numEnvs: this.config.numInstances,
         backend: this.config.backend,
         gameId: this.config.gameId,
+        observationConfig: safeObservationConfig,
       })
     })
   }
@@ -391,11 +400,15 @@ export class UnifiedDQN {
    */
   async saveCheckpoint(): Promise<string> {
     const weights = await this.requestWeights()
+    const obsConfig = this.config.observationConfig
+    const obsLabels = getObservationLabels(this.config.gameId, obsConfig)
     const checkpoint = {
       type: 'flappy-ai-checkpoint-v3',
       createdAt: new Date().toISOString(),
       architecture: {
         hiddenLayers: this.config.agentConfig.hiddenLayers || DefaultTFDQNConfig.hiddenLayers,
+        observationConfig: obsConfig,
+        observationLabels: obsLabels,
       },
       info: {
         epsilon: this.lastMetrics.epsilon,

@@ -125,9 +125,17 @@ export interface IVectorizedEnv<
 }
 
 /**
+ * Base observation configuration - games extend this with their specific features
+ */
+export interface BaseObservationConfig {
+  [key: string]: boolean
+}
+
+/**
  * Factory function type for creating environments
  */
 export type EnvFactory<TRewardConfig extends BaseRewardConfig = BaseRewardConfig> = (
   numEnvs: number,
-  rewardConfig?: Partial<TRewardConfig>
+  rewardConfig?: Partial<TRewardConfig>,
+  observationConfig?: BaseObservationConfig
 ) => IVectorizedEnv

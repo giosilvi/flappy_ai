@@ -28,6 +28,7 @@ import {
   InputController,
   GameConfig as FlappyGameConfig,
   MAX_VISUALIZED_INSTANCES,
+  ObservationLabels,
   type GameAction,
 } from '@/games/flappy'
 import { 
@@ -81,6 +82,10 @@ export default defineComponent({
       type: String,
       default: 'flappy',
     },
+    observationConfig: {
+      type: Object as PropType<Record<string, boolean> | undefined>,
+      default: undefined,
+    },
   },
   emits: [
     'score-update', 
@@ -91,6 +96,7 @@ export default defineComponent({
     'weight-health-update', 
     'auto-eval-result', 
     'architecture-loaded',
+    'observation-config-loaded',
     'backend-ready',
     'eval-instances-set',
     'gap-size-update',
@@ -124,9 +130,11 @@ export default defineComponent({
       backend: 'cpu' as BackendType,
       lastInitHiddenLayers: null as number[] | null,
       lastInitBackend: null as BackendType | 'auto' | null,
+      lastInitObservationConfig: null as Record<string, boolean> | null,
       pendingNumInstances: null as number | null,
       preferredBackend: 'auto' as BackendType | 'auto',
       lastGapSize: null as number | null,
+      inputLabels: [] as string[],
     }
   },
   computed: {
@@ -155,6 +163,7 @@ export default defineComponent({
   },
   async mounted() {
     this.isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+    this.inputLabels = this.computeInputLabels(this.observationConfig)
     await this.initGame()
   },
   beforeUnmount() {
@@ -167,6 +176,30 @@ export default defineComponent({
     }
   },
   methods: {
+    computeInputLabels(observationConfig?: Record<string, boolean>): string[] {
+      const labels: string[] = []
+      const order = ObservationLabels
+      const friendly: Record<typeof ObservationLabels[number], string> = {
+        birdY: 'y',
+        birdVel: 'vel',
+        dx1: 'dx₁',
+        dy1: 'dy₁',
+        dx2: 'dx₂',
+        dy2: 'dy₂',
+        gapVel1: 'gapV₁',
+        gapVel2: 'gapV₂',
+        gapSize1: 'gap',
+      }
+      const cfg = observationConfig ?? this.observationConfig ?? {}
+      for (const key of order) {
+        if ((cfg as Record<string, boolean>)[key]) {
+          labels.push(friendly[key])
+        }
+      }
+      // Fallback to at least one label
+      if (labels.length === 0) labels.push('f1')
+      return labels
+    },
     teardownUnifiedDQN() {
       if (this.unifiedDQN) {
         this.unifiedDQN.dispose()
@@ -213,8 +246,15 @@ export default defineComponent({
       this.renderFrame()
     },
 
-    async initUnifiedDQN(hiddenLayersOverride?: number[]) {
+    async initUnifiedDQN(hiddenLayersOverride?: number[], observationConfigOverride?: Record<string, boolean>) {
       const desiredLayers = hiddenLayersOverride ? hiddenLayersOverride : this.hiddenLayersConfig
+      const desiredObservationConfig = observationConfigOverride ?? this.observationConfig
+      // Clone observation config to avoid sending Vue proxies to the worker
+      const safeObservationConfig = desiredObservationConfig
+        ? JSON.parse(JSON.stringify(desiredObservationConfig))
+        : undefined
+      // Update input labels based on the observation config that will be used
+      this.inputLabels = this.computeInputLabels(safeObservationConfig || this.observationConfig)
 
       // Wait for any in-flight initialization to finish before proceeding
       if (this.isInitializing) {
@@ -226,7 +266,8 @@ export default defineComponent({
 
       // If an instance now exists with the same architecture AND backend, skip redundant re-init
       const backendChanged = this.lastInitBackend !== this.preferredBackend
-      if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers) && !backendChanged) {
+      const obsChanged = JSON.stringify(this.lastInitObservationConfig || {}) !== JSON.stringify(safeObservationConfig || this.observationConfig || {})
+      if (this.unifiedDQN && this.lastInitHiddenLayers && this.layersEqual(this.lastInitHiddenLayers, desiredLayers) && !backendChanged && !obsChanged) {
         return
       }
       
@@ -241,6 +282,7 @@ export default defineComponent({
         const hiddenLayers = [...desiredLayers]
         this.lastInitHiddenLayers = [...hiddenLayers]
         this.lastInitBackend = this.preferredBackend
+        this.lastInitObservationConfig = safeObservationConfig
 
         // Capture the current instance count at init start
         const initNumInstances = this.numInstances
@@ -257,6 +299,7 @@ export default defineComponent({
           visualize: this.canVisualize,
           frameLimit30: this.frameLimit30,
           gameId: this.gameId,
+          observationConfig: safeObservationConfig,
         })
 
         await this.unifiedDQN.init({
@@ -472,10 +515,10 @@ export default defineComponent({
     },
 
     // ===== Training Mode =====
-    async startTraining(_hiddenLayers?: number[]) {
+    async startTraining(_hiddenLayers?: number[], _observationConfig?: Record<string, boolean>) {
       // If a specific architecture is provided (e.g., from checkpoint), ensure we init with it
       if (!this.unifiedDQN || _hiddenLayers) {
-        await this.initUnifiedDQN(_hiddenLayers)
+        await this.initUnifiedDQN(_hiddenLayers, _observationConfig)
       }
 
       // Stop any running eval before starting training (clean mode transition)
@@ -639,12 +682,18 @@ export default defineComponent({
         return
       }
 
-      // Extract hidden layers from checkpoint
+      // Extract hidden layers and observation config/labels from checkpoint
       const hiddenLayers = checkpoint.info?.hiddenLayers || checkpoint.architecture?.hiddenLayers || [64, 64]
+      const obsConfig = checkpoint.architecture?.observationConfig
+      const obsLabels = checkpoint.architecture?.observationLabels
 
       // Emit architecture-loaded FIRST to update App.vue's hiddenLayersConfig
       // This will also change mode to 'training' and set isPaused=true
       this.$emit('architecture-loaded', hiddenLayers)
+      // Emit observation config/labels so parent updates UI/input labels
+      if (obsConfig || obsLabels) {
+        this.$emit('observation-config-loaded', { config: obsConfig, labels: obsLabels })
+      }
 
       // Wait a tick for the prop to update, then initialize with correct architecture
       await this.$nextTick()
@@ -653,7 +702,7 @@ export default defineComponent({
       // (existing instance may have different layer dimensions)
       // Note: initUnifiedDQN() handles disposal of existing instance internally
       // Pass hiddenLayers directly to avoid relying on parent prop update timing
-      await this.initUnifiedDQN(hiddenLayers)
+      await this.initUnifiedDQN(hiddenLayers, obsConfig)
 
       // Load checkpoint into newly initialized agent
       const agent = this.unifiedDQN

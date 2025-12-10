@@ -109,6 +109,17 @@ describe('tfTraining.worker integration (real env, gameId aware)', () => {
         numEnvs: 2,
         backend: 'cpu',
         gameId: 'flappy',
+        observationConfig: {
+          birdY: true,
+          birdVel: true,
+          dx1: true,
+          dy1: true,
+          dx2: true,
+          dy2: true,
+          gapVel1: false,
+          gapVel2: false,
+          gapSize1: true, // cover optional gap size input
+        },
       }
 
       worker.postMessage(initMessage)
@@ -142,3 +153,4 @@ describe('tfTraining.worker integration (real env, gameId aware)', () => {
     90000
   )
 })
+
