@@ -123,10 +123,13 @@ backups/
 # ─────────────────────────────────────────────────────────────────────────────
 .pytest_cache/
 .coverage
+coverage/
+web_client/coverage/
 htmlcov/
 .tox/
 .nox/
 coverage.xml
+coverage-final.json
 *.cover
 
 # ─────────────────────────────────────────────────────────────────────────────

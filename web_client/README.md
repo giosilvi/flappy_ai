@@ -1,18 +1,18 @@
 ## Overview
 
-This folder is the **new browser-first implementation** of Flappy AI, designed to:
+This folder is the **browser-first implementation** of the VibeGames front-end (multi-game), designed to:
 
-- Run **game simulation, RL training, and inference entirely in the browser** (on the user’s CPU).
+- Run **game simulation, RL training, and inference entirely in the browser** (CPU/WebGL/WebGPU).
 - Provide a **Vue 3 (Option API) UI** with controls for live-tuning training (e.g. epsilon, learning rate, speed).
 - Show an **overlay with metrics** (rewards, episode lengths, Q-values, etc.).
 - Visualize the **neural network (nodes/edges, activations/weights)** live during inference.
-- Support a **leaderboard** for users who clear the most pipes.
+- Support **per-game leaderboards** (gameId-aware).
 
 The existing Python project (`FlapPyBird/` and `server/`) remains as a **reference implementation and backend support** (RL logic, game design, assets, leaderboard/champion storage), but the new system here is **implemented in JavaScript/TypeScript + Vue** and is intended to be the **main user-facing app**.
 
 ---
 
-## High-Level Architecture
+## High-Level Architecture (current state)
 
 ### Product & UX Decisions (from requirements)
 
@@ -31,40 +31,36 @@ The existing Python project (`FlapPyBird/` and `server/`) remains as a **referen
   - **Hyperparameters and UI settings only persist while the page is open.**
   - When the tab/window is closed, settings reset. Show a small disclaimer in the UI.
 
-- **Game Engine (Browser)**  
-  - Implemented as a pure JS/TS module using `<canvas>` (2D) to render the Flappy Bird game.
-  - Encapsulates:
-    - Game loop (step/update, collision detection, scoring).
-    - Entities: bird, pipes, background, floor, score display.
-    - State representation suitable for RL (e.g. bird y, velocity, pipe distances/gaps).
-  - Runs at a **configurable simulation speed** (can be faster than real-time).
+- **Game layer (modular, multi-game)**  
+  - A **game registry** (`src/games/index.ts`) maps `gameId` → factories for:
+    - `createEnv` (vectorized env implementing `IVectorizedEnv`)
+    - `createRenderer` and `createTiledRenderer`
+    - `defaultRewardConfig` and game metadata
+  - Currently ships with **Flappy Bird** as the default game; more games can be added by registering in the registry.
+  - Game assets live under `public/assets/...` (per game).
 
 - **RL Core (Browser)**  
-  - Implemented in JS/TS using **TensorFlow.js** (required dependency).
-  - Algorithm: **DQN only for v1** (with common DQN variants left as future work).
-  - Responsibilities:
-    - DQN policy network + target network.
-    - Replay buffer.
-    - Epsilon-greedy action selection.
-    - Training loop (collect experience, sample batches, update network).
-    - Save/load model weights (browser storage and/or backend as needed).
+  - Implemented in JS/TS using **TensorFlow.js**.
+  - Algorithm: **DQN** (tfTraining.worker + TFDQNAgent + UnifiedDQN wrapper).
+  - Vectorized environments come from the **game registry**; worker receives `gameId` to build the correct env and reward defaults.
+  - Supports backend selection (cpu/webgl/webgpu), auto-eval, epsilon decay, and live metric streaming.
 
-- **Vue 3 App (Option API)**  
-  - Root SPA that:
-    - Hosts the canvas where the game is drawn.
-    - Hosts an **overlay UI** with controls, metrics, and NN visualization.
-    - Manages global app state via Vue’s reactivity (or a simple store pattern).
+- **Vue 3 App (Option API) + Router**  
+  - Routes:
+    - `/` Landing page (game cards from registry, marketing copy)
+    - `/game/:gameId` Training/eval view bound to the selected game
+  - Components consume `gameId` to route requests, leaderboards, renderers, and envs correctly.
 
 - **Leaderboard Backend (Minimal Server)**  
-  - Simple REST API (could be Python/FastAPI, Node, or reuse existing server folder).
-  - Endpoints:
-    - `GET /leaderboard`: returns top N scores.
-    - `POST /leaderboard`: submit `{ name, score, timestamp, maybe model_hash }`.
-  - Persistence: SQLite, Postgres, or a simple cloud DB, depending on deployment.
+  - Node/Express in `web_client/server/index.js`.
+  - Per-game leaderboards stored separately; endpoints accept `gameId`:
+    - `GET /api/leaderboard?gameId=...`
+    - `POST /api/leaderboard` with `{ name, pipes/score, params, architecture, gameId }`
+    - `GET /api/leaderboard/lowest?gameId=...`
 
 ---
 
-## Folder Structure (Proposed)
+## Folder Structure (Current, condensed)
 
 Inside `web_client/`:
 
@@ -73,49 +69,21 @@ Inside `web_client/`:
   - Sprites, audio, icons.
 
 - `src/`
-  - `main.ts` (or `main.js`): Vue app bootstrap.
-  - `App.vue`: root component shell (contains layout for canvas + overlays).
-
+  - `main.ts`, `router/` (Vue + vue-router bootstrapping)
+  - `views/`
+    - `LandingPage.vue` (game cards, marketing)
+    - `GameView.vue` (training/eval shell; receives `gameId` from route)
   - `components/`
-    - `GameCanvas.vue`: wraps `<canvas>`, handles resize, delegates drawing to game engine.
-    - `ControlPanel.vue`: sliders/inputs for RL hyperparameters and game speed.
-    - `MetricsPanel.vue`: displays rewards, episode lengths, epsilon, loss curves, etc.
-    - `NetworkViewer.vue`: NN graph visualization (layers, nodes, edges, activations/weights).
-    - `Leaderboard.vue`: shows top scores, allows name submission after a good run.
-    - `StatusBar.vue`: small component for quick status info (episode, steps/sec, training mode).
-
-  - `game/`
-    - `GameEngine.ts`: core game loop and logic (step/update, collisions, scoring).
-    - `GameState.ts`: types/interfaces for game state and RL observation vectors.
-    - `Renderer.ts`: rendering logic for drawing sprites, backgrounds, and overlays to canvas.
-    - `InputController.ts`: maps user input (for manual mode) or agent actions to game actions.
-    - `config.ts`: game-related constants (gravity, jump velocity, pipe speed/gap, etc.).
-
+    - `GameCanvas.vue` (renderers resolved per `gameId`, hooks into UnifiedDQN)
+    - Control/metrics/network/leaderboard panels (Option API)
+  - `games/`
+    - `index.ts` registry (gameId → env/renderers/default rewards/metadata)
+    - `flappy/` (current game: engine, renderers, config, vectorized env)
   - `rl/`
-    - `DQNAgent.ts`: main RL agent (policy network, target network, act/train methods).
-    - `QNetwork.ts`: model definition (TF.js or custom NN implementation).
-    - `ReplayBuffer.ts`: circular buffer for experience tuples.
-    - `Scheduler.ts`: helpers for epsilon decay, learning rate schedules, etc.
-    - `TrainingLoop.ts`: orchestrates episodes, interacts with `GameEngine`, logs metrics.
-    - `serialization.ts`: save/load model parameters to browser storage.
-
-  - `store/` (optional but recommended)
-    - `appState.ts`: reactive global state (mode, current epsilon, speed, metrics).
-    - `leaderboard.ts`: cached leaderboard entries and API interactions.
-
-  - `services/`
-    - `apiClient.ts`: HTTP client for leaderboard API.
-    - `metricsLogger.ts`: collects time-series data for rewards, losses, etc.
-
-  - `visualization/`
-    - `networkLayout.ts`: utilities to compute node positions for NN visualization.
-    - `colorMaps.ts`: mapping activation/weight values to colors.
-
-  - `styles/`
-    - Global styles, layout, theme (CSS/SCSS/Tailwind/etc.).
-
-  - `types/`
-    - Shared TS interfaces/types (if using TS).
+    - `UnifiedDQN`, `TFDQNAgent`, `tfTraining.worker` (now game-aware via `gameId`)
+    - `IVectorizedEnv.ts` (interface) and shared RL types/utilities
+  - `services/apiClient.ts` (game-aware leaderboard client)
+  - `styles/` (global styling)
 
 - `public/`
   - `index.html`: app entry.
@@ -125,64 +93,16 @@ Inside `web_client/`:
 
 ---
 
-## Detailed Implementation Plan (Step-by-Step)
+## Notes on the refactor
 
-### 1. Bootstrapping the Vue 3 App (Option API)
-
-1. Initialize a Vue 3 project (with Vite or similar) inside `web_client/`.
-2. Configure:
-   - TypeScript (optional but recommended).
-   - ESLint + Prettier (or preferred linting/formatting).
-3. In `main.ts`:
-   - Create the Vue app and mount it to `#app`.
-   - Use **Option API** in all components (`export default { data() { ... }, methods: { ... }, computed: { ... } }`).
-4. In `App.vue`:
-   - Layout with:
-     - A main area containing `GameCanvas`.
-     - Side/top/bottom panels for `ControlPanel`, `MetricsPanel`, `NetworkViewer`, `Leaderboard`.
-
-### 2. Implementing the Game Engine
-
-1. In `game/GameState.ts`:
-   - Define interfaces for:
-     - Raw game state (bird position/velocity, pipe positions/gaps, score, done flag).
-     - RL observation vector (normalized floats / scaled values).
-2. In `game/config.ts`:
-   - Port physics and game rules from Python:
-     - Gravity, jump impulse, pipe speed, spacing, floor height, etc.
-   - Keep constants in one place to allow experiments and future tuning.
-   - Aim for **game fidelity as close as possible to the existing Python version**.
-3. In `game/GameEngine.ts`:
-   - Implement:
-     - `reset()` to initialize a new episode.
-     - `step(action)` where action is e.g. `0 = do nothing`, `1 = flap`.
-     - Collision detection (bird with pipes/floor/ceiling).
-     - Reward function:
-       - Small negative/zero per step, positive for passing pipes, large negative on death.
-      - Reward structure should **mimic the Python version**, but:
-        - Expose individual reward components (e.g. per-step, pipe-passed, death-penalty) so the user can **toggle them on/off** and **scale their magnitude**.
-        - Once a training run starts, reward config is **frozen** until a full reset.
-     - Methods to:
-       - Get current raw game state.
-       - Transform raw state into RL observation vector (using `GameState` helpers).
-4. In `game/Renderer.ts`:
-   - Load sprites from `assets/sprites`.
-   - Implement draw functions:
-     - Background, pipes, floor, bird, score.
-   - Support:
-     - Fixed logical resolution and scaling to canvas size.
-     - Optional rendering of debug info (hitboxes, etc.).
-5. In `game/GameEngine.ts` or a small orchestrator:
-   - Implement a **time-scaled loop**:
-     - For **training mode**, allow decoupling simulation step rate from screen refresh:
-       - Speed factor `k` in the range **0.25x–10x**.
-       - For `k > 1`, run multiple simulation steps per animation frame.
-       - For `k < 1`, effectively slow motion (fewer steps per second).
-     - For **evaluation mode**, **force 1x speed** (no speed control, stable viewing).
-   - Ensure **manual control**:
-     - Keyboard (space/arrow/tap) and mobile touch support.
-     - When the user presses a control, mark the episode as **manual**.
-     - Manual episodes should still produce transitions that go into the **replay buffer**.
+- **Multi-game ready:** The RL worker, UnifiedDQN, leaderboard API client, and GameCanvas all accept `gameId`. The registry provides envs/renderers/rewards per game.
+- **Default game:** Flappy Bird remains the default (`DEFAULT_GAME_ID = 'flappy'`), but adding a new game means:
+  1) Implement its env + renderers under `src/games/<yourGame>/`
+  2) Register it in `src/games/index.ts`
+  3) Add assets under `public/assets/<yourGame>/`
+  4) Link to it via `/game/<yourGame>` (it will appear on the landing page automatically).
+- **Per-game leaderboards:** API endpoints and client calls are game-aware; data is stored per game.
+- **Vue Router:** Landing (`/`) + game view (`/game/:gameId`); the app shell is just a router view.
 
 ### 3. RL Core: DQN in the Browser
 

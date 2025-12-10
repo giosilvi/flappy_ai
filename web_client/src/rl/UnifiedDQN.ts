@@ -4,18 +4,17 @@
  * Manages Web Worker communication and provides a clean API for the UI
  */
 
-import type { RawGameState } from '../game/GameState'
-import type { RewardConfig } from '../game/config'
-import { VALID_INSTANCE_COUNTS, MAX_VISUALIZED_INSTANCES, type ValidInstanceCount } from '../game/VectorizedEnv'
+import { VALID_INSTANCE_COUNTS, MAX_VISUALIZED_INSTANCES, type ValidInstanceCount } from '../games/flappy/VectorizedEnv'
 import type { TFDQNConfig } from './TFDQNAgent'
 import { DefaultTFDQNConfig } from './TFDQNAgent'
 import type { TrainingMetrics, AutoEvalResult, WeightHealthMetrics } from './types'
 import { DefaultTrainingMetrics } from './types'
 import type { BackendType } from './backendUtils'
+import type { BaseGameState } from './IVectorizedEnv'
 
 // Import worker message types
 type WorkerMessage =
-  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto' }
+  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string }
   | { type: 'setNumEnvs'; count: number }
   | { type: 'startTraining'; visualize: boolean }
   | { type: 'stopTraining' }
@@ -30,14 +29,14 @@ type WorkerMessage =
   | { type: 'setLearningRate'; value: number }
   | { type: 'setLRScheduler'; enabled: boolean }
   | { type: 'setGamma'; value: number }
-  | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
+  | { type: 'setRewardConfig'; config: Partial<Record<string, number>> }
   | { type: 'reset' }
   | { type: 'setAutoEval'; enabled: boolean; trials?: number; interval?: number }
 
 type WorkerResponse =
   | { type: 'ready'; backend: BackendType }
   | { type: 'metrics'; data: TrainingMetrics }
-  | { type: 'gameStates'; states: RawGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
+  | { type: 'gameStates'; states: BaseGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
   | { type: 'weights'; data: { layerWeights: number[][][] } }
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'weightHealth'; data: WeightHealthMetrics }
@@ -49,7 +48,7 @@ export type UnifiedDQNMode = 'idle' | 'training' | 'eval' | 'autoEval'
 
 export interface UnifiedDQNCallbacks {
   onMetrics?: (metrics: TrainingMetrics) => void
-  onGameStates?: (states: RawGameState[], rewards?: number[], cumulativeRewards?: number[]) => void
+  onGameStates?: (states: BaseGameState[], rewards?: number[], cumulativeRewards?: number[]) => void
   onAutoEvalResult?: (result: AutoEvalResult) => void
   onWeightHealth?: (health: WeightHealthMetrics) => void
   onEpisodeEnd?: (stats: { score: number; reward: number; length: number; envIndex: number }) => void
@@ -65,6 +64,7 @@ export interface UnifiedDQNConfig {
   backend: BackendType | 'auto'
   visualize: boolean
   frameLimit30: boolean
+  gameId: string  // Game identifier (e.g., 'flappy')
 }
 
 const DEFAULT_CONFIG: UnifiedDQNConfig = {
@@ -73,6 +73,7 @@ const DEFAULT_CONFIG: UnifiedDQNConfig = {
   backend: 'auto',
   visualize: true,
   frameLimit30: false,
+  gameId: 'flappy',
 }
 
 /**
@@ -140,6 +141,7 @@ export class UnifiedDQN {
         config: safeAgentConfig,
         numEnvs: this.config.numInstances,
         backend: this.config.backend,
+        gameId: this.config.gameId,
       })
     })
   }
@@ -347,7 +349,7 @@ export class UnifiedDQN {
     this.postMessage({ type: 'setGamma', value })
   }
 
-  setRewardConfig(config: Partial<RewardConfig>): void {
+  setRewardConfig(config: Partial<Record<string, number>>): void {
     this.postMessage({ type: 'setRewardConfig', config })
   }
 

@@ -23,18 +23,19 @@ import { defineComponent } from 'vue'
 import type { PropType } from 'vue'
 import {
   GameEngine,
-  Renderer,
-  TiledRenderer,
+  Renderer as FlappyRenderer,
+  TiledRenderer as FlappyTiledRenderer,
   InputController,
-  GameConfig,
+  GameConfig as FlappyGameConfig,
   MAX_VISUALIZED_INSTANCES,
   type GameAction,
-  type RawGameState,
-} from '@/game'
+} from '@/games/flappy'
 import { 
   UnifiedDQN, 
   type BackendType,
+  type BaseGameState,
 } from '@/rl'
+import { getGame, DEFAULT_GAME_ID } from '@/games'
 
 export default defineComponent({
   name: 'GameCanvas',
@@ -76,6 +77,10 @@ export default defineComponent({
       type: Number,
       default: 200000,
     },
+    gameId: {
+      type: String,
+      default: 'flappy',
+    },
   },
   emits: [
     'score-update', 
@@ -88,12 +93,13 @@ export default defineComponent({
     'architecture-loaded',
     'backend-ready',
     'eval-instances-set',
+    'gap-size-update',
   ],
   data() {
     return {
       // Renderers
-      singleRenderer: null as Renderer | null,
-      tiledRenderer: null as TiledRenderer | null,
+      singleRenderer: null as any,
+      tiledRenderer: null as any,
       
       // Game state
       engine: null as GameEngine | null,
@@ -120,6 +126,7 @@ export default defineComponent({
       lastInitBackend: null as BackendType | 'auto' | null,
       pendingNumInstances: null as number | null,
       preferredBackend: 'auto' as BackendType | 'auto',
+      lastGapSize: null as number | null,
     }
   },
   computed: {
@@ -137,6 +144,14 @@ export default defineComponent({
     numInstances(newVal: number) {
       this.updateInstanceCount(newVal)
     },
+    async gameId() {
+      // Force re-init when switching games
+      this.teardownUnifiedDQN()
+      this.lastInitHiddenLayers = null
+      this.lastInitBackend = null
+      // Reinitialize game-specific components (renderers, engine, canvas)
+      await this.initGame()
+    },
   },
   async mounted() {
     this.isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0
@@ -152,22 +167,40 @@ export default defineComponent({
     }
   },
   methods: {
+    teardownUnifiedDQN() {
+      if (this.unifiedDQN) {
+        this.unifiedDQN.dispose()
+        this.unifiedDQN = null
+      }
+    },
     async initGame() {
       const canvas = this.$refs.canvas as HTMLCanvasElement
       if (!canvas) return
 
-      // Use native game resolution - CSS handles display scaling
-      canvas.width = GameConfig.WIDTH   // 288
-      canvas.height = GameConfig.HEIGHT // 512
+      // Resolve game module for renderers
+      const gameModule = getGame(this.gameId) || getGame(DEFAULT_GAME_ID)
+      const rendererFactory = gameModule?.createRenderer || ((c: HTMLCanvasElement) => new FlappyRenderer(c))
+      const tiledFactory =
+        gameModule?.createTiledRenderer ||
+        ((c: HTMLCanvasElement, w: number, h: number) => new FlappyTiledRenderer(c, w, h))
+
+      // Use native game resolution (fallback to flappy sizes)
+      const baseWidth = FlappyGameConfig.WIDTH
+      const baseHeight = FlappyGameConfig.HEIGHT
+      canvas.width = baseWidth
+      canvas.height = baseHeight
 
       // Initialize single-game renderer (for manual mode and idle)
-      this.singleRenderer = new Renderer(canvas)
-      await this.singleRenderer.loadSprites()
+      this.singleRenderer = rendererFactory(canvas)
+      if (this.singleRenderer?.loadSprites) {
+        await this.singleRenderer.loadSprites()
+      }
 
       // Initialize tiled renderer (for parallel training/eval)
-      // Use native dimensions - it will scale internally for tiles
-      this.tiledRenderer = new TiledRenderer(canvas, GameConfig.WIDTH, GameConfig.HEIGHT)
-      await this.tiledRenderer.loadSprites()
+      this.tiledRenderer = tiledFactory(canvas, baseWidth, baseHeight)
+      if (this.tiledRenderer?.loadSprites) {
+        await this.tiledRenderer.loadSprites()
+      }
 
       // Initialize game engine (for manual mode)
       this.engine = new GameEngine()
@@ -223,6 +256,7 @@ export default defineComponent({
           backend: this.preferredBackend,
           visualize: this.canVisualize,
           frameLimit30: this.frameLimit30,
+          gameId: this.gameId,
         })
 
         await this.unifiedDQN.init({
@@ -270,7 +304,7 @@ export default defineComponent({
         this.pendingNumInstances = null
         // Ensure auto-eval uses current instance count (capped at 64)
         // Scale interval with sqrt of instances (more instances = faster episodes = less frequent auto-eval)
-        const autoEvalInterval = Math.round(2500 * Math.sqrt(desiredCount))
+        const autoEvalInterval = Math.round(1000 * Math.sqrt(desiredCount))
         this.unifiedDQN.setAutoEval(true, Math.min(desiredCount, 64), autoEvalInterval)
       }
       } finally {
@@ -285,7 +319,7 @@ export default defineComponent({
         this.unifiedDQN.setVisualization(count <= MAX_VISUALIZED_INSTANCES)
         this.unifiedDQN.setFrameLimit(this.frameLimit30)
         // Scale interval with sqrt of instances (more instances = faster episodes = less frequent auto-eval)
-        const autoEvalInterval = Math.round(2500 * Math.sqrt(count))
+        const autoEvalInterval = Math.round(1000 * Math.sqrt(count))
         this.unifiedDQN.setAutoEval(true, Math.min(count, 64), autoEvalInterval)
       } else {
         // Defer applying until init completes
@@ -297,13 +331,35 @@ export default defineComponent({
       }
     },
 
-    renderTiledStates(states: RawGameState[], rewards?: number[], cumulativeRewards?: number[]) {
+    renderTiledStates(states: BaseGameState[], rewards?: number[], cumulativeRewards?: number[]) {
+      this.emitGapSize(states)
       if (!this.tiledRenderer || !this.canVisualize) return
       // Don't show rewards during eval mode - only during training
       if (this.mode === 'eval') {
         this.tiledRenderer.render(states)
       } else {
         this.tiledRenderer.render(states, rewards, cumulativeRewards)
+      }
+    },
+    emitGapSize(states: BaseGameState[]) {
+      if (this.mode !== 'eval') {
+        return
+      }
+      if (!states || states.length === 0) {
+        return
+      }
+      const firstState: any = states[0] || {}
+      const pipes = firstState.pipes as any[] | undefined
+      if (!pipes || pipes.length === 0) {
+        return
+      }
+      const rawGap = pipes[0]?.gapSize ?? pipes[0]?.gap_size
+      if (typeof rawGap !== 'number') {
+        return
+      }
+      if (this.lastGapSize !== rawGap) {
+        this.lastGapSize = rawGap
+        this.$emit('gap-size-update', rawGap)
       }
     },
 
@@ -320,8 +376,8 @@ export default defineComponent({
       // Reset canvas to single-game dimensions
       const canvas = this.$refs.canvas as HTMLCanvasElement
       if (canvas) {
-        canvas.width = GameConfig.WIDTH
-        canvas.height = GameConfig.HEIGHT
+        canvas.width = FlappyGameConfig.WIDTH
+        canvas.height = FlappyGameConfig.HEIGHT
       }
 
       this.engine.reset()
@@ -373,8 +429,8 @@ export default defineComponent({
       const now = performance.now()
       const elapsed = now - this.lastFrameTime
 
-      if (elapsed >= GameConfig.FRAME_TIME) {
-        this.lastFrameTime = now - (elapsed % GameConfig.FRAME_TIME)
+      if (elapsed >= FlappyGameConfig.FRAME_TIME) {
+        this.lastFrameTime = now - (elapsed % FlappyGameConfig.FRAME_TIME)
 
         if (!this.internalPaused && !this.gameOver) {
           const action = this.pendingAction
@@ -412,7 +468,7 @@ export default defineComponent({
       const state = this.engine.getState()
       const showMessage = this.mode === 'idle' && !this.isRunning
 
-      this.singleRenderer.render(state as RawGameState, showMessage)
+      this.singleRenderer.render(state as BaseGameState, showMessage)
     },
 
     // ===== Training Mode =====

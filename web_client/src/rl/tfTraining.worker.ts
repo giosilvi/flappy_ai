@@ -3,9 +3,10 @@
  * Runs DQN training in a separate thread with vectorized environments
  */
 
-import { VectorizedEnv, MAX_VISUALIZED_INSTANCES } from '../game/VectorizedEnv'
-import { DefaultRewardConfig, DefaultObservationConfig, type RewardConfig } from '../game/config'
-import type { RawGameState } from '../game/GameState'
+import { MAX_VISUALIZED_INSTANCES } from '../games/flappy/VectorizedEnv'
+import { DefaultRewardConfig as FlappyDefaultRewardConfig } from '../games/flappy/config'
+import type { BaseGameState, BaseRewardConfig, IVectorizedEnv } from './IVectorizedEnv'
+import { getGame, DEFAULT_GAME_ID } from '../games'
 import { TFDQNAgent, type TFDQNConfig, DefaultTFDQNConfig } from './TFDQNAgent'
 import { ReplayBuffer } from './ReplayBuffer'
 import { 
@@ -19,7 +20,7 @@ import { initBestBackend, type BackendType } from './backendUtils'
 // ===== Message Types =====
 
 type WorkerMessage =
-  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto' }
+  | { type: 'init'; config: Partial<TFDQNConfig>; numEnvs: number; backend: BackendType | 'auto'; gameId?: string }
   | { type: 'setNumEnvs'; count: number }
   | { type: 'startTraining'; visualize: boolean }
   | { type: 'stopTraining' }
@@ -34,14 +35,14 @@ type WorkerMessage =
   | { type: 'setLearningRate'; value: number }
   | { type: 'setLRScheduler'; enabled: boolean }
   | { type: 'setGamma'; value: number }
-  | { type: 'setRewardConfig'; config: Partial<RewardConfig> }
+  | { type: 'setRewardConfig'; config: Partial<Record<string, number>> }
   | { type: 'reset' }
   | { type: 'setAutoEval'; enabled: boolean; trials?: number; interval?: number }
 
 type WorkerResponse =
   | { type: 'ready'; backend: BackendType }
   | { type: 'metrics'; data: TrainingMetrics }
-  | { type: 'gameStates'; states: RawGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
+  | { type: 'gameStates'; states: BaseGameState[]; rewards?: number[]; cumulativeRewards?: number[] }
   | { type: 'weights'; data: { layerWeights: number[][][] } }
   | { type: 'autoEvalResult'; result: AutoEvalResult }
   | { type: 'weightHealth'; data: WeightHealthMetrics }
@@ -52,12 +53,13 @@ type WorkerResponse =
 // ===== Worker State =====
 
 let agent: TFDQNAgent | null = null
-let env: VectorizedEnv | null = null
+let env: IVectorizedEnv<BaseGameState, BaseRewardConfig> | null = null
 let buffer: ReplayBuffer | null = null
 let metricsCollector: MetricsCollector | null = null
 let config: TFDQNConfig = { ...DefaultTFDQNConfig }
-let rewardConfig: RewardConfig = { ...DefaultRewardConfig }
+let rewardConfig: Record<string, number> = { ...FlappyDefaultRewardConfig }
 let currentBackend: BackendType = 'cpu'
+let currentGameId: string = DEFAULT_GAME_ID
 
 // Training state
 let isTraining = false
@@ -84,10 +86,8 @@ let savedNumEnvsBeforeAutoEval = 1  // Saved training env size
 const BASE_WARMUP_SIZE = 10000  // Fixed warmup size (no scaling)
 const MAX_BUFFER_SIZE = 1_000_000
 const TARGET_SCALE_DIVISOR = 32
-let baseEpsilonDecaySteps = DefaultTFDQNConfig.epsilonDecaySteps
 let baseBufferSize = DefaultTFDQNConfig.bufferSize
 let baseTargetUpdateFreq = DefaultTFDQNConfig.targetUpdateFreq
-let baseLearningRate = DefaultTFDQNConfig.learningRate
 let warmupSize = BASE_WARMUP_SIZE
 let bufferCapacity = DefaultTFDQNConfig.bufferSize
 
@@ -110,42 +110,34 @@ function applyScaling(currentNumEnvs: number): void {
   // Scale buffer capacity with number of envs
   const newBufferCapacity = Math.min(baseBufferSize * N, MAX_BUFFER_SIZE)
 
-  // Scale epsilon decay
-  config.epsilonDecaySteps = Math.max(1, Math.round(baseEpsilonDecaySteps * N))
+  // Epsilon decay and learning rate are NOT scaled - user controls these directly
+  // This prevents unexpected behavior when changing parallel instances
 
-  // Scale target update freq and LR to reduce instability at high env counts
+  // Scale target update freq to reduce instability at high env counts
   const targetScale = Math.max(1, N / TARGET_SCALE_DIVISOR)
   config.targetUpdateFreq = Math.max(1, Math.round(baseTargetUpdateFreq * targetScale))
-  config.learningRate = baseLearningRate / Math.sqrt(targetScale)
 
   // Apply to existing agent/buffer/collector if present
   if (agent) {
-    agent.setEpsilonDecaySteps(config.epsilonDecaySteps)
-    agent.setLearningRate(config.learningRate)
     // Adjust target update frequency directly on agent config
     ;(agent as unknown as { config: TFDQNConfig }).config.targetUpdateFreq = config.targetUpdateFreq
   }
 
-  if (!buffer || bufferCapacity !== newBufferCapacity) {
-    bufferCapacity = newBufferCapacity
-    buffer = new ReplayBuffer(bufferCapacity)
+  if (!buffer) {
+    buffer = new ReplayBuffer(newBufferCapacity)
+  } else if (bufferCapacity !== newBufferCapacity) {
+    buffer.resize(newBufferCapacity)
   }
+  bufferCapacity = newBufferCapacity
 
-  if (metricsCollector) {
-    metricsCollector = new MetricsCollector({
-      emitIntervalMs: METRICS_INTERVAL,
-      warmupSize: warmupSize,
+  // Keep existing metricsCollector to preserve cumulative metrics (episode count, totalSteps)
+  // Only re-wire the episode callback if env exists
+  if (metricsCollector && env) {
+    env.clearOnEpisodeComplete()
+    const collector = metricsCollector
+    env.setOnEpisodeComplete((stats) => {
+      collector.recordEpisode(stats.reward, stats.length, stats.score)
     })
-    // Re-wire episode callback for training metrics
-    if (env) {
-      env.clearOnEpisodeComplete()
-      const collector = metricsCollector
-      if (collector) {
-        env.setOnEpisodeComplete((stats) => {
-          collector.recordEpisode(stats.reward, stats.length, stats.score)
-        })
-      }
-    }
   }
 }
 
@@ -154,7 +146,8 @@ function applyScaling(currentNumEnvs: number): void {
 async function initialize(
   agentConfig: Partial<TFDQNConfig>,
   initialNumEnvs: number,
-  backend: BackendType | 'auto'
+  backend: BackendType | 'auto',
+  gameId: string = DEFAULT_GAME_ID
 ): Promise<void> {
   try {
     // Initialize TensorFlow.js backend
@@ -162,22 +155,42 @@ async function initialize(
     currentBackend = backendInfo.name
     console.log(`[TFWorker] TF.js initialized with backend: ${currentBackend}`)
 
-    // Store config and bases for scaling
-    config = { ...DefaultTFDQNConfig, ...agentConfig }
+    // Track current game
+    currentGameId = gameId || DEFAULT_GAME_ID
+
+    // Resolve game module FIRST to get input/output dimensions
+    const resolvedGameId = currentGameId || DEFAULT_GAME_ID
+    const gameModule = getGame(resolvedGameId) || getGame(DEFAULT_GAME_ID)
+    if (!gameModule) {
+      throw new Error(`Game module not found for id: ${resolvedGameId}`)
+    }
+
+    // Get game-specific dimensions from registry
+    const { inputDim, outputDim } = gameModule.info
+
+    // Store config with game-specific dimensions and bases for scaling
+    config = {
+      ...DefaultTFDQNConfig,
+      inputDim,
+      actionDim: outputDim,
+      ...agentConfig,  // User config can still override if needed
+    }
     numEnvs = initialNumEnvs
-    baseEpsilonDecaySteps = config.epsilonDecaySteps
     baseBufferSize = config.bufferSize
     baseTargetUpdateFreq = config.targetUpdateFreq
-    baseLearningRate = config.learningRate
 
-    // Scale hyperparameters based on env count
+    // Scale hyperparameters based on env count (buffer size and target update only)
     applyScaling(numEnvs)
 
-    // Create agent
+    // Create agent with game-specific dimensions
     agent = new TFDQNAgent(config)
 
-    // Create vectorized environment
-    env = new VectorizedEnv(numEnvs, rewardConfig, DefaultObservationConfig)
+    // Initialize reward config from game defaults
+    const defaultRewards = gameModule.defaultRewardConfig || FlappyDefaultRewardConfig
+    rewardConfig = { ...defaultRewards }
+
+    // Create vectorized environment via registry
+    env = gameModule.createEnv(numEnvs, rewardConfig) as IVectorizedEnv<BaseGameState, BaseRewardConfig>
 
     // Create replay buffer
     buffer = new ReplayBuffer(bufferCapacity)
@@ -223,92 +236,99 @@ function runTrainingBatch(): void {
     lastFrameTime = now
   }
 
-  const startTime = performance.now()
-  const batchSteps = visualize && frameLimitEnabled ? 1 : 512  // Slow down when showing frames
+  try {
+    const startTime = performance.now()
+    const batchSteps = visualize && frameLimitEnabled ? 1 : 512  // Slow down when showing frames
 
-  // Get current observations
-  let observations = env.getObservations()
+    // Get current observations
+    let observations = env.getObservations()
 
-  for (let i = 0; i < batchSteps && isTraining; i++) {
-    // Select actions (batched)
-    const actions = agent.actBatch(observations, true)
+    for (let i = 0; i < batchSteps && isTraining; i++) {
+      // Select actions (batched)
+      const actions = agent.actBatch(observations, true)
 
-    // Step environments
-    const result = env.stepAll(actions, true)  // Auto-reset for training
+      // Step environments
+      const result = env.stepAll(actions, true)  // Auto-reset for training
 
-    // Store transitions in replay buffer
-    for (let j = 0; j < numEnvs; j++) {
-      buffer.add({
-        state: observations[j],
-        action: actions[j],
-        reward: result.rewards[j],
-        nextState: result.observations[j],
-        done: result.dones[j],
-      })
+      // Store transitions in replay buffer
+      for (let j = 0; j < numEnvs; j++) {
+        buffer.add({
+          state: observations[j],
+          action: actions[j],
+          reward: result.rewards[j],
+          nextState: result.observations[j],
+          done: result.dones[j],
+        })
+      }
+
+      // Update metrics and epsilon decay (env steps drive epsilon decay)
+      metricsCollector.recordSteps(numEnvs)
+      agent.recordEnvSteps(numEnvs)  // This updates epsilon based on total env steps
+
+      // Train agent (after warmup, every TRAIN_FREQ steps)
+      const totalSteps = metricsCollector.getMetrics().totalSteps
+      const bufferSize = buffer.size()
+      
+      if (bufferSize >= warmupSize && totalSteps % TRAIN_FREQ === 0) {
+        const batch = buffer.sample(BATCH_SIZE)
+        const loss = agent.trainBatch(
+          batch.map(t => t.state),
+          batch.map(t => t.action),
+          batch.map(t => t.reward),
+          batch.map(t => t.nextState),
+          batch.map(t => t.done)
+        )
+        metricsCollector.updateTrainingMetrics({ loss, bufferSize })
+      }
+
+      // Update epsilon in metrics
+      metricsCollector.updateTrainingMetrics({ epsilon: agent.getEpsilon() })
+
+      observations = result.observations
+
+      // Check if we should run auto-eval (every autoEvalInterval episodes, after warmup)
+      const currentEpisode = metricsCollector.getMetrics().episode
+      if (autoEvalEnabled && 
+          !isAutoEvalRunning && 
+          bufferSize >= warmupSize && 
+          currentEpisode > 0 && 
+          currentEpisode - lastAutoEvalEpisode >= autoEvalInterval) {
+        // Pause training and run auto-eval
+        runAutoEval()
+        return  // Exit batch loop, auto-eval will resume training when done
+      }
+
+      // Time limit per batch
+      if (performance.now() - startTime > 50) break
     }
 
-    // Update metrics and epsilon decay (env steps drive epsilon decay)
-    metricsCollector.recordSteps(numEnvs)
-    agent.recordEnvSteps(numEnvs)  // This updates epsilon based on total env steps
-
-    // Train agent (after warmup, every TRAIN_FREQ steps)
-    const totalSteps = metricsCollector.getMetrics().totalSteps
-    const bufferSize = buffer.size()
-    
-    if (bufferSize >= warmupSize && totalSteps % TRAIN_FREQ === 0) {
-      const batch = buffer.sample(BATCH_SIZE)
-      const loss = agent.trainBatch(
-        batch.map(t => t.state),
-        batch.map(t => t.action),
-        batch.map(t => t.reward),
-        batch.map(t => t.nextState),
-        batch.map(t => t.done)
-      )
-      metricsCollector.updateTrainingMetrics({ loss, bufferSize })
+    // Emit metrics periodically
+    const now = performance.now()
+    if (now - lastMetricsTime >= METRICS_INTERVAL) {
+      emitMetrics()
+      emitWeightHealth()
+      lastMetricsTime = now
     }
 
-    // Update epsilon in metrics
-    metricsCollector.updateTrainingMetrics({ epsilon: agent.getEpsilon() })
-
-    observations = result.observations
-
-    // Check if we should run auto-eval (every autoEvalInterval episodes, after warmup)
-    const currentEpisode = metricsCollector.getMetrics().episode
-    if (autoEvalEnabled && 
-        !isAutoEvalRunning && 
-        bufferSize >= warmupSize && 
-        currentEpisode > 0 && 
-        currentEpisode - lastAutoEvalEpisode >= autoEvalInterval) {
-      // Pause training and run auto-eval
-      runAutoEval()
-      return  // Exit batch loop, auto-eval will resume training when done
+    // Emit game states for visualization (throttled)
+    if (visualize && numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
+      emitGameStates()
+      lastStatesTime = now
     }
 
-    // Time limit per batch
-    if (performance.now() - startTime > 50) break
+    // Emit network viz for single instance (throttled to ~30fps)
+    if (visualize && numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+      emitNetworkViz()
+      lastNetworkVizTime = now
+    }
+  } catch (error) {
+    // Log error but don't crash the training loop
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    console.error('[TFWorker] Training batch error:', errorMsg)
+    self.postMessage({ type: 'error', message: `Training error: ${errorMsg}` } as WorkerResponse)
   }
 
-  // Emit metrics periodically
-  const now = performance.now()
-  if (now - lastMetricsTime >= METRICS_INTERVAL) {
-    emitMetrics()
-    emitWeightHealth()
-    lastMetricsTime = now
-  }
-
-  // Emit game states for visualization (throttled)
-  if (visualize && numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
-    emitGameStates()
-    lastStatesTime = now
-  }
-
-  // Emit network viz for single instance (throttled to ~30fps)
-  if (visualize && numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
-    emitNetworkViz()
-    lastNetworkVizTime = now
-  }
-
-  // Continue training loop
+  // Continue training loop (even after error, to allow recovery)
   if (isTraining) {
     setTimeout(runTrainingBatch, 0)
   }
@@ -329,42 +349,49 @@ function runEvalBatch(): void {
     lastFrameTime = now
   }
 
-  const startTime = performance.now()
-  const batchSteps = visualize && frameLimitEnabled ? 1 : 64  // Pace eval when visualizing
+  try {
+    const startTime = performance.now()
+    const batchSteps = visualize && frameLimitEnabled ? 1 : 64  // Pace eval when visualizing
 
-  let observations = env.getObservations()
+    let observations = env.getObservations()
 
-  for (let i = 0; i < batchSteps && isEval; i++) {
-    // Check if all environments are done (for manual eval)
-    if (!autoRestartEval && env.countActive() === 0) {
-      finishEval()
-      return
+    for (let i = 0; i < batchSteps && isEval; i++) {
+      // Check if all environments are done (for manual eval)
+      if (!autoRestartEval && env.countActive() === 0) {
+        finishEval()
+        return
+      }
+
+      // Select greedy actions (no exploration in eval)
+      const actions = agent.actBatch(observations, false)
+
+      // Step environments
+      const result = env.stepAll(actions, autoRestartEval)
+      observations = result.observations
+
+      if (performance.now() - startTime > 30) break
     }
 
-    // Select greedy actions (no exploration in eval)
-    const actions = agent.actBatch(observations, false)
+    // Emit game states for visualization (throttled)
+    const now = performance.now()
+    if (numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
+      emitGameStates()
+      lastStatesTime = now
+    }
 
-    // Step environments
-    const result = env.stepAll(actions, autoRestartEval)
-    observations = result.observations
-
-    if (performance.now() - startTime > 30) break
+    // Emit network viz for single instance (throttled to ~30fps)
+    if (numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
+      emitNetworkViz()
+      lastNetworkVizTime = now
+    }
+  } catch (error) {
+    // Log error but don't crash the eval loop
+    const errorMsg = error instanceof Error ? error.message : String(error)
+    console.error('[TFWorker] Eval batch error:', errorMsg)
+    self.postMessage({ type: 'error', message: `Eval error: ${errorMsg}` } as WorkerResponse)
   }
 
-  // Emit game states for visualization (throttled)
-  const now = performance.now()
-  if (numEnvs <= MAX_VISUALIZED_INSTANCES && now - lastStatesTime >= STATES_INTERVAL) {
-    emitGameStates()
-    lastStatesTime = now
-  }
-
-  // Emit network viz for single instance (throttled to ~30fps)
-  if (numEnvs === 1 && now - lastNetworkVizTime >= NETWORK_VIZ_INTERVAL) {
-    emitNetworkViz()
-    lastNetworkVizTime = now
-  }
-
-  // Continue eval loop
+  // Continue eval loop (even after error, to allow recovery)
   if (isEval) {
     setTimeout(runEvalBatch, 0)
   }
@@ -621,7 +648,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (msg.type) {
       case 'init':
-        await initialize(msg.config, msg.numEnvs, msg.backend)
+        await initialize(msg.config, msg.numEnvs, msg.backend, msg.gameId || DEFAULT_GAME_ID)
         break
 
       case 'setNumEnvs':
@@ -641,9 +668,10 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
           self.postMessage({ type: 'error', message: 'Not initialized' } as WorkerResponse)
           return
         }
-        // Always reset env if: first time, instance count changed, OR eval ran since last training
+        // Reset env only on first time OR eval ran since last training
         // (eval episodes shouldn't leak into training metrics - they use ε=0 and have higher scores)
-        const shouldResetEnv = lastTrainingNumEnvs === null || numEnvs !== lastTrainingNumEnvs || ranEvalSinceLastTraining
+        // Instance count changes are handled by resize() without resetting metrics
+        const shouldResetEnv = lastTrainingNumEnvs === null || ranEvalSinceLastTraining
         isTraining = true
         isEval = false
         visualize = msg.visualize && numEnvs <= MAX_VISUALIZED_INSTANCES
@@ -758,19 +786,38 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         break
 
       case 'setRewardConfig':
-        rewardConfig = { ...rewardConfig, ...msg.config }
-        env?.setRewardConfig(msg.config)
+        {
+          // Filter out undefined values to satisfy Record<string, number>
+          const sanitized: Record<string, number> = { ...rewardConfig }
+          for (const [key, value] of Object.entries(msg.config)) {
+            if (typeof value === 'number') {
+              sanitized[key] = value
+            }
+          }
+          rewardConfig = sanitized
+          env?.setRewardConfig(sanitized)
+        }
         break
 
       case 'setAutoEval':
         autoEvalEnabled = msg.enabled
         if (typeof msg.interval === 'number' && msg.interval > 0) {
-          autoEvalInterval = msg.interval
+          const newInterval = msg.interval
+          const currentEpisode = metricsCollector?.getMetrics().episode || 0
+          const gapSinceLastEval = currentEpisode - lastAutoEvalEpisode
+          
+          // If new interval is smaller and would immediately trigger, reset the counter
+          // This prevents auto-eval from triggering when switching to fewer instances
+          if (newInterval < autoEvalInterval && gapSinceLastEval >= newInterval) {
+            lastAutoEvalEpisode = currentEpisode
+            console.log(`[TFWorker] Auto-eval interval shrunk, resetting lastAutoEvalEpisode to ${currentEpisode}`)
+          }
+          
+          autoEvalInterval = newInterval
         }
         if (typeof msg.trials === 'number' && msg.trials > 0) {
           autoEvalTrials = Math.min(msg.trials, 64)
         }
-        lastAutoEvalEpisode = 0  // Reset counter so next check uses new interval
         console.log(
           `[TFWorker] Auto-eval ${autoEvalEnabled ? 'enabled' : 'disabled'} (every ${autoEvalInterval} eps, ${autoEvalTrials} trials)`
         )
