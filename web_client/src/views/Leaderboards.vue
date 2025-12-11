@@ -32,7 +32,7 @@
                 <p class="subtitle">{{ game.description }}</p>
               </div>
               <div class="meta">
-                <span>{{ game.inputDim }} inputs · {{ game.outputDim }} actions</span>
+                <span>up to {{ maxInputs(game.id) }} inputs · {{ game.outputDim }} actions</span>
               </div>
             </div>
 
@@ -79,7 +79,6 @@
 
             <div class="card-actions">
               <router-link :to="`/game/${game.id}`" class="btn btn-primary">Play &amp; Train</router-link>
-              <router-link :to="`/game/${game.id}`" class="btn btn-secondary">View full leaderboard</router-link>
             </div>
           </div>
         </div>
@@ -93,6 +92,7 @@ import { defineComponent } from 'vue'
 import GradientDescentBackground from '@/components/GradientDescentBackground.vue'
 import { getAllGames, type GameInfo } from '@/games'
 import { apiClient, type LeaderboardEntry } from '@/services/apiClient'
+import { ObservationLabels } from '@/games/flappy/GameState'
 
 type LeaderboardState = {
   entries: LeaderboardEntry[]
@@ -142,7 +142,7 @@ export default defineComponent({
     async loadLeaderboards() {
       const promises = this.games.map(async (game) => {
         try {
-          const result = await apiClient.getLeaderboard(game.id, 5)
+          const result = await apiClient.getLeaderboard(game.id, 10)
           this.leaderboards[game.id] = {
             entries: result.entries || [],
             loading: false,
@@ -158,6 +158,11 @@ export default defineComponent({
       if (!params) return '—'
       if (params >= 1000) return `${(params / 1000).toFixed(1)}K`
       return params.toString()
+    },
+    maxInputs(gameId: string): number {
+      if (gameId === 'flappy') return ObservationLabels.length
+      const game = this.games.find(g => g.id === gameId)
+      return game?.inputDim || 0
     },
     handleHeroClick() {
       const gradientBg = this.$refs.gradientBg as any

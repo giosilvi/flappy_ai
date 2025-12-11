@@ -48,7 +48,7 @@
             <p class="game-description">{{ game.description }}</p>
             <div class="game-meta">
               <span class="meta-item">
-                <span class="meta-label">Inputs:</span> {{ game.inputDim }}
+                <span class="meta-label">Inputs:</span> up to {{ maxInputs(game.id) }}
               </span>
               <span class="meta-item">
                 <span class="meta-label">Actions:</span> {{ game.outputDim }}
@@ -141,6 +141,7 @@
 <script lang="ts">
 import { defineComponent } from 'vue'
 import { getAllGames, type GameInfo } from '@/games'
+import { ObservationLabels } from '@/games/flappy/GameState'
 import GradientDescentBackground from '@/components/GradientDescentBackground.vue'
 import NeuralBirdBackground from '@/components/NeuralBirdBackground.vue'
 import { apiClient, type TrafficMetrics } from '@/services/apiClient'
@@ -185,6 +186,11 @@ export default defineComponent({
       const metrics = await apiClient.incrementVisit()
       this.metrics = metrics
       this.metricsLoaded = true
+    },
+    maxInputs(gameId: string): number {
+      if (gameId === 'flappy') return ObservationLabels.length
+      const game = this.games.find(g => g.id === gameId)
+      return game?.inputDim || 0
     },
     handleHeroClick() {
       const gradientBg = this.$refs.gradientBg as any
