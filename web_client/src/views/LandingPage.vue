@@ -110,14 +110,18 @@
             More instances = faster learning. Scale with your hardware.
           </p>
         </div>
-        <div class="feature-card">
+        <router-link
+          class="feature-card link-card"
+          to="/leaderboards"
+        >
           <div class="feature-icon">🏆</div>
           <h3 class="feature-title">Compete</h3>
           <p class="feature-description">
             Submit your best scores to the leaderboard.
             Smaller networks get bonus points for efficiency!
           </p>
-        </div>
+          <div class="link-cta">View leaderboards →</div>
+        </router-link>
       </div>
     </section>
 

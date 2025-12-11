@@ -108,7 +108,10 @@
       <!-- Footer -->
       <footer class="leaderboard-footer">
         <p class="footer-note">
-          Score = max pipes cleared in a single greedy evaluation run
+          Adjusted score = pipes × √({{ referenceParams }} / params), rounded to 0.1
+        </p>
+        <p class="footer-note">
+          Pipes = max cleared in one greedy eval run (ε = 0). Smaller nets get a bonus; larger get a penalty.
         </p>
       </footer>
     </div>
@@ -117,7 +120,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue'
-import { apiClient, type LeaderboardEntry, calculateAdjustedScore, getEfficiencyMultiplier } from '@/services/apiClient'
+import { apiClient, type LeaderboardEntry, calculateAdjustedScore, getEfficiencyMultiplier, REFERENCE_PARAMS } from '@/services/apiClient'
 
 export default defineComponent({
   name: 'Leaderboard',
@@ -161,6 +164,9 @@ export default defineComponent({
   computed: {
     adjustedScore(): number {
       return calculateAdjustedScore(this.pendingScore, this.pendingParams)
+    },
+    referenceParams(): number {
+      return REFERENCE_PARAMS
     },
     efficiencyMultiplier(): number {
       return getEfficiencyMultiplier(this.pendingParams)

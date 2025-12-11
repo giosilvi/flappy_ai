@@ -3,7 +3,7 @@
  */
 
 // Reference network size for efficiency calculation (6→64→64→2)
-const REFERENCE_PARAMS = 8706
+export const REFERENCE_PARAMS = 8706
 
 // API base URL - use relative path in production (Caddy proxies /api to backend)
 const API_BASE = import.meta.env.VITE_API_URL || '/api'

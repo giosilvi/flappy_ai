@@ -24,6 +24,14 @@ const routes: RouteRecordRaw[] = [
     },
   },
   {
+    path: '/leaderboards',
+    name: 'leaderboards',
+    component: () => import('@/views/Leaderboards.vue'),
+    meta: {
+      title: 'Leaderboards - VibeGames',
+    },
+  },
+  {
     path: '/game/:gameId',
     name: 'game',
     component: () => import('@/views/GameView.vue'),
