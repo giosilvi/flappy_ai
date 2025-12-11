@@ -202,10 +202,20 @@ mkdir -p "$BACKUP_DIR"
 # Check if leaderboard container exists and has data
 if docker ps -a | grep -q flappy-leaderboard; then
   echo "💾 Backing up leaderboard data..."
-  BACKUP_FILE="$BACKUP_DIR/leaderboard-$(date +%Y%m%d-%H%M%S).json"
-  docker cp flappy-leaderboard:/app/data/leaderboard.json "$BACKUP_FILE" 2>/dev/null && \
-    echo "   ✓ Backup saved to: $BACKUP_FILE" || \
+  BACKUP_STAMP="$(date +%Y%m%d-%H%M%S)"
+  BACKUP_DIR_STAMPED="$BACKUP_DIR/leaderboard-$BACKUP_STAMP"
+  mkdir -p "$BACKUP_DIR_STAMPED"
+
+  # Copy entire data dir to capture all game files and metrics (e.g., metrics.json, leaderboard-flappy.json)
+  if docker cp flappy-leaderboard:/app/data "$BACKUP_DIR_STAMPED/data" >/dev/null 2>&1; then
+    echo "   ✓ Backup saved to: $BACKUP_DIR_STAMPED/data"
+    # For convenience also copy legacy filename if present
+    if [ -f "$BACKUP_DIR_STAMPED/data/leaderboard.json" ]; then
+      cp "$BACKUP_DIR_STAMPED/data/leaderboard.json" "$BACKUP_DIR/leaderboard-$BACKUP_STAMP.json"
+    fi
+  else
     echo "   ⚠️ No existing leaderboard data to backup"
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
