@@ -431,6 +431,7 @@ export default defineComponent({
       lowestLeaderboardScore: 0,
       lastSubmittedBestScore: 0,
       currentGapSize: null as number | null,
+      hasRecordedPlayer: false,
     }
   },
   computed: {
@@ -519,7 +520,19 @@ export default defineComponent({
     async refreshLeaderboardThreshold() {
       this.lowestLeaderboardScore = await apiClient.getLowestScore(this.gameId)
     },
+    async ensurePlayerRecorded() {
+      if (this.hasRecordedPlayer) {
+        return
+      }
+      this.hasRecordedPlayer = true
+      try {
+        await apiClient.incrementPlayer()
+      } catch (error) {
+        console.warn('[GameView] Failed to record player:', error)
+      }
+    },
     startManualPlay() {
+      this.ensurePlayerRecorded()
       this.manualEvalActive = false
       this.autoEvalActive = false
       this.mode = 'manual'
@@ -552,6 +565,7 @@ export default defineComponent({
       }
     },
     openTrainingConfig() {
+      this.ensurePlayerRecorded()
       this.manualEvalActive = false
       this.autoEvalActive = false
       this.mode = 'configuring'
@@ -559,6 +573,7 @@ export default defineComponent({
       this.isPaused = false
     },
     async startTrainingWithConfig(hiddenLayers: number[], observationConfig?: Record<string, boolean>) {
+      this.ensurePlayerRecorded()
       this.hiddenLayersConfig = hiddenLayers
       if (observationConfig) {
         this.observationConfig = { ...observationConfig }
@@ -914,6 +929,7 @@ export default defineComponent({
           }
         }
       } else if (newMode === 'training') {
+        this.ensurePlayerRecorded()
         this.manualEvalActive = false
         this.mode = 'training'
         this.isPaused = false
@@ -932,6 +948,7 @@ export default defineComponent({
           }
         }
       } else if (newMode === 'manual') {
+        this.ensurePlayerRecorded()
         this.manualEvalActive = false
         this.mode = 'manual'
         this.currentGapSize = null

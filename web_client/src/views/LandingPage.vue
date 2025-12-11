@@ -127,6 +127,9 @@
         Built with Vue 3 + TensorFlow.js
       </p>
       <p class="footer-vibe">vibe-coded with AI assistance</p>
+      <p v-if="metricsLoaded" class="traffic-counts">
+        visits: {{ metrics.visits }} · players: {{ metrics.players }}
+      </p>
     </footer>
   </div>
 </template>
@@ -136,6 +139,7 @@ import { defineComponent } from 'vue'
 import { getAllGames, type GameInfo } from '@/games'
 import GradientDescentBackground from '@/components/GradientDescentBackground.vue'
 import NeuralBirdBackground from '@/components/NeuralBirdBackground.vue'
+import { apiClient, type TrafficMetrics } from '@/services/apiClient'
 
 export default defineComponent({
   name: 'LandingPage',
@@ -148,6 +152,8 @@ export default defineComponent({
       games: [] as GameInfo[],
       prevHtmlOverflow: '',
       prevBodyOverflow: '',
+      metrics: { visits: 0, players: 0 } as TrafficMetrics,
+      metricsLoaded: false,
     }
   },
   created() {
@@ -161,6 +167,7 @@ export default defineComponent({
     this.prevBodyOverflow = body.style.overflowY
     html.style.overflowY = 'auto'
     body.style.overflowY = 'auto'
+    this.recordVisit()
   },
   beforeUnmount() {
     // Restore previous overflow settings for game views
@@ -170,6 +177,11 @@ export default defineComponent({
     body.style.overflowY = this.prevBodyOverflow
   },
   methods: {
+    async recordVisit() {
+      const metrics = await apiClient.incrementVisit()
+      this.metrics = metrics
+      this.metricsLoaded = true
+    },
     handleHeroClick() {
       const gradientBg = this.$refs.gradientBg as any
       if (gradientBg && gradientBg.handleClick) {
@@ -497,6 +509,12 @@ export default defineComponent({
   font-size: 0.8rem;
   font-style: italic;
   font-family: monospace;
+}
+
+.traffic-counts {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  margin-top: 6px;
 }
 
 /* Responsive */

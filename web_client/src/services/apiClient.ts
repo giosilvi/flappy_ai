@@ -61,6 +61,12 @@ export interface SubmitScoreResponse {
   isNewChampion: boolean
 }
 
+export interface TrafficMetrics {
+  visits: number
+  players: number
+  updatedAt?: string
+}
+
 class ApiClient {
   private baseUrl: string
 
@@ -157,6 +163,45 @@ class ApiClient {
     } catch (error) {
       console.warn('Failed to get lowest score:', error)
       return 0  // Allow submission on error
+    }
+  }
+
+  async getMetrics(): Promise<TrafficMetrics> {
+    try {
+      const response = await fetch(`${this.baseUrl}/metrics`)
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.warn('Failed to get metrics:', error)
+      return { visits: 0, players: 0 }
+    }
+  }
+
+  async incrementVisit(): Promise<TrafficMetrics> {
+    try {
+      const response = await fetch(`${this.baseUrl}/metrics/visit`, { method: 'POST' })
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.warn('Failed to record visit:', error)
+      return { visits: 0, players: 0 }
+    }
+  }
+
+  async incrementPlayer(): Promise<TrafficMetrics> {
+    try {
+      const response = await fetch(`${this.baseUrl}/metrics/player`, { method: 'POST' })
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return await response.json()
+    } catch (error) {
+      console.warn('Failed to record player:', error)
+      return { visits: 0, players: 0 }
     }
   }
 }

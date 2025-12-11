@@ -20,6 +20,9 @@ const DEFAULT_GAME_ID = 'flappy';
 // Valid game IDs (can be extended as more games are added)
 const VALID_GAME_IDS = ['flappy'];
 
+// Metrics file name (aggregate, no identifiers)
+const METRICS_FILE = 'metrics.json';
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -29,6 +32,46 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+}
+
+function getMetricsFilePath() {
+  ensureDataDir();
+  return path.join(DATA_DIR, METRICS_FILE);
+}
+
+function loadMetrics() {
+  const metricsFile = getMetricsFilePath();
+  try {
+    if (fs.existsSync(metricsFile)) {
+      const data = fs.readFileSync(metricsFile, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('Error reading metrics file:', error);
+  }
+  return { visits: 0, players: 0, updatedAt: new Date().toISOString() };
+}
+
+function saveMetrics(metrics) {
+  const metricsFile = getMetricsFilePath();
+  const payload = {
+    visits: Math.max(0, Number(metrics.visits) || 0),
+    players: Math.max(0, Number(metrics.players) || 0),
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(metricsFile, JSON.stringify(payload, null, 2));
+  } catch (error) {
+    console.error('Error saving metrics file:', error);
+    throw error;
+  }
+  return payload;
+}
+
+function incrementMetric(key) {
+  const metrics = loadMetrics();
+  metrics[key] = (metrics[key] || 0) + 1;
+  return saveMetrics(metrics);
 }
 
 /**
@@ -190,6 +233,32 @@ app.get('/api/games', (req, res) => {
       name: id.charAt(0).toUpperCase() + id.slice(1),
     })),
   });
+});
+
+// GET /api/metrics - Get aggregate visit/player counts (no identifiers)
+app.get('/api/metrics', (req, res) => {
+  const metrics = loadMetrics();
+  res.json(metrics);
+});
+
+// POST /api/metrics/visit - Increment visit counter (no cookies or IDs)
+app.post('/api/metrics/visit', (req, res) => {
+  try {
+    const metrics = incrementMetric('visits');
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to record visit' });
+  }
+});
+
+// POST /api/metrics/player - Increment player counter (no cookies or IDs)
+app.post('/api/metrics/player', (req, res) => {
+  try {
+    const metrics = incrementMetric('players');
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to record player' });
+  }
 });
 
 // Health check
