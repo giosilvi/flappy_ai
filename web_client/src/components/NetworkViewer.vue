@@ -239,7 +239,7 @@ export default defineComponent({
   },
   data() {
     return {
-      inputLabels: BASE_INPUT_LABELS,
+      inputLabelFallback: BASE_INPUT_LABELS,
       displayNodes: 5, // Max nodes to show visually per layer
       // Weight health tracking (pre-computed metrics received from props)
       deltaHistory: [] as number[], // Last N delta values
@@ -269,13 +269,13 @@ export default defineComponent({
     inputCount(): number {
       const countFromActivations = this.activations[0]?.length
       const countFromProps = this.inputLabels?.length
-      const count = countFromActivations ?? countFromProps ?? BASE_INPUT_LABELS.length
+      const count = countFromActivations ?? countFromProps ?? this.inputLabelFallback.length
       return Math.max(1, count)
     },
     dynamicInputLabels(): string[] {
       const source = this.inputLabels && this.inputLabels.length > 0
         ? this.inputLabels
-        : BASE_INPUT_LABELS
+        : this.inputLabelFallback
       const labels: string[] = []
       for (let i = 0; i < this.inputCount; i++) {
         labels.push(source[i] ?? `f${i + 1}`)
