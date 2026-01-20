@@ -420,6 +420,7 @@ export default defineComponent({
       networkEpsilon: 0,  // Epsilon for network viz (separate from control epsilon)
       isExploring: false,
       effectiveInputLabels: [] as string[],
+      inputLabelsFromCheckpoint: false, // Flag to prevent overwriting checkpoint labels
       weightHealth: null as { delta: number; avgSign: number } | null,
       isPaused: false,
       showGameOver: false,
@@ -732,10 +733,13 @@ export default defineComponent({
         ...hiddenLayers.map(() => []),
         viz.qValues,
       ]
-      // Compute effective input labels based on actual input length (e.g., loaded checkpoints)
-      const inputDim = viz.input?.length || 0
-      const baseLabels = this.inputLabels
-      this.effectiveInputLabels = inputDim > 0 ? baseLabels.slice(0, inputDim) : baseLabels
+      // Compute effective input labels based on actual input length
+      // Preserve checkpoint labels if they were loaded from a checkpoint
+      if (!this.inputLabelsFromCheckpoint) {
+        const inputDim = viz.input?.length || 0
+        const baseLabels = this.inputLabels
+        this.effectiveInputLabels = inputDim > 0 ? baseLabels.slice(0, inputDim) : baseLabels
+      }
 
       if (viz.qValues && viz.qValues.length === 2) {
         this.qValues = [viz.qValues[0], viz.qValues[1]] as [number, number]
@@ -751,9 +755,13 @@ export default defineComponent({
         this.observationConfig = { ...this.observationConfig, ...payload.config }
       }
       if (payload.labels && payload.labels.length > 0) {
+        // Labels from checkpoint - preserve them and mark as from checkpoint
         this.effectiveInputLabels = [...payload.labels]
+        this.inputLabelsFromCheckpoint = true
       } else {
+        // No checkpoint labels, use computed labels and allow updates
         this.effectiveInputLabels = this.inputLabels
+        this.inputLabelsFromCheckpoint = false
       }
     },
     handleWeightHealthUpdate(health: any) {
